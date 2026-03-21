@@ -20,16 +20,21 @@ function toCamelCase(str: string): string {
   return p.charAt(0).toLowerCase() + p.slice(1);
 }
 
-function toKebab(str: string): string {
-  return normalizeStr(str)
-    .replace(/([a-z])([A-Z])/g, '$1-$2')
-    .replace(/[^a-zA-Z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .toLowerCase();
-}
-
 function buildTypeName(method: string, path: string, suffix: string): string {
   return buildNameFromPath(method, path) + suffix;
+}
+
+/**
+ * Derives a PascalCase module name from the tag slug.
+ * "restricted-files" → "RestrictedFilesModule"
+ * "autenticacao"     → "AutenticacaoModule"
+ */
+function slugToModuleName(slug: string): string {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join('') + 'Module';
 }
 
 export function generateModule(tag: ParsedTag, spec: OpenAPISpec): string {
@@ -38,8 +43,9 @@ export function generateModule(tag: ParsedTag, spec: OpenAPISpec): string {
 
   const typeImports = collectTypeImports(tag);
   if (typeImports.length > 0) {
+    // Use tag.slug for the import path (same as the types file name)
     lines.push(
-      `import type { ${typeImports.join(', ')} } from './${toKebab(tag.name)}.types';`
+      `import type { ${typeImports.join(', ')} } from './${tag.slug}.types';`
     );
   }
 
@@ -49,7 +55,7 @@ export function generateModule(tag: ParsedTag, spec: OpenAPISpec): string {
   lines.push('const instance = axios.create({ baseURL: BASE_URL });');
   lines.push('');
 
-  const moduleName = toPascalCase(tag.name) + 'Module';
+  const moduleName = slugToModuleName(tag.slug);
   lines.push(`export const ${moduleName} = {`);
 
   for (let i = 0; i < tag.operations.length; i++) {
@@ -99,7 +105,7 @@ function buildReturnType(op: ParsedOperation, spec: OpenAPISpec): string {
 }
 
 function buildAxiosCall(op: ParsedOperation): string {
-  let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => `\${\}`);
+  let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => `\${${p}}`);
   url = '`${BASE_URL}' + url + '`';
   const hasBody   = !!op.requestBody;
   const hasParams = op.queryParams.length > 0;
