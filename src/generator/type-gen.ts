@@ -8,21 +8,57 @@ import type {
 } from '../types/openapi';
 import { isReferenceObject } from '../types/openapi';
 
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+/** Strip combining diacritics (ã→a, ç→c, é→e, etc.) */
+function normalizeStr(str: string): string {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/** "foo-bar baz [qux]" → "FooBarBazQux" */
+function toPascalCase(str: string): string {
+  return normalizeStr(str)
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join('');
+}
+
 /**
- * Generates TypeScript type definitions for a parsed tag.
- * Returns the content of the .types.ts file.
+ * Build a unique, readable name from HTTP method + URL path.
+ *
+ * POST /restricted/files/presigned-url   → PostRestrictedFilesPresignedUrl
+ * GET  /restricted/files/{fileId}        → GetRestrictedFilesByFileId
+ * DELETE /restricted/files/{key}         → DeleteRestrictedFilesByKey
  */
-export function generateTypes(
-  tag: ParsedTag,
-  spec: OpenAPISpec
-): string {
+export function buildNameFromPath(method: string, path: string): string {
+  const segments = path.split('/').filter(Boolean);
+  const parts = segments.map((seg) => {
+    if (seg.startsWith('{') && seg.endsWith('}')) {
+      const param = seg.slice(1, -1);
+      return 'By' + toPascalCase(param);
+    }
+    return toPascalCase(seg);
+  });
+  return toPascalCase(method) + parts.join('');
+}
+
+function buildTypeName(method: string, path: string, suffix: string): string {
+  return buildNameFromPath(method, path) + suffix;
+}
+
+// ─── main export ─────────────────────────────────────────────────────────────
+
+export function generateTypes(tag: ParsedTag, spec: OpenAPISpec): string {
   const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT', ''];
   const generatedInterfaces = new Set<string>();
 
   for (const op of tag.operations) {
-    // Generate request body type
+    // Request body type
     if (op.requestBody) {
-      const typeName = buildTypeName(op.operationId, 'Input');
+      const typeName = buildTypeName(op.method, op.path, 'Input');
       if (!generatedInterfaces.has(typeName)) {
         const schema = resolveSchema(op.requestBody, spec);
         if (schema) {
@@ -33,9 +69,9 @@ export function generateTypes(
       }
     }
 
-    // Generate query params type
+    // Query params type
     if (op.queryParams.length > 0) {
-      const typeName = buildTypeName(op.operationId, 'Params');
+      const typeName = buildTypeName(op.method, op.path, 'Params');
       if (!generatedInterfaces.has(typeName)) {
         lines.push(generateParamsInterface(typeName, op.queryParams, spec));
         lines.push('');
@@ -43,13 +79,12 @@ export function generateTypes(
       }
     }
 
-    // Generate response type
+    // Response type
     if (op.responseSchema) {
-      const typeName = buildTypeName(op.operationId, 'Response');
+      const typeName = buildTypeName(op.method, op.path, 'Response');
       if (!generatedInterfaces.has(typeName)) {
         const schema = resolveSchema(op.responseSchema, spec);
         if (schema) {
-          // If it's an array, generate the item type
           if (schema.type === 'array' && schema.items) {
             const itemSchema = resolveSchema(schema.items, spec);
             if (itemSchema) {
@@ -69,16 +104,7 @@ export function generateTypes(
   return lines.join('\n');
 }
 
-function buildTypeName(operationId: string, suffix: string): string {
-  const base = toPascalCase(operationId);
-  return `${base}${suffix}`;
-}
-
-function toPascalCase(str: string): string {
-  return str
-    .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
-    .replace(/^./, (s) => s.toUpperCase());
-}
+// ─── schema resolution ───────────────────────────────────────────────────────
 
 export function resolveSchema(
   schemaOrRef: SchemaObject | ReferenceObject,
@@ -88,7 +114,6 @@ export function resolveSchema(
     return resolveRef(schemaOrRef.$ref, spec);
   }
 
-  // Handle allOf by merging
   if (schemaOrRef.allOf) {
     const merged: SchemaObject = { type: 'object', properties: {}, required: [] };
     for (const item of schemaOrRef.allOf) {
@@ -107,32 +132,22 @@ export function resolveSchema(
 }
 
 function resolveRef(ref: string, spec: OpenAPISpec): SchemaObject | null {
-  // #/components/schemas/User → components.schemas.User
   const parts = ref.replace('#/', '').split('/');
   let current: any = spec;
-
   for (const part of parts) {
     current = current?.[part];
     if (!current) return null;
   }
-
-  // Recursively resolve if the result is also a ref
-  if (current.$ref) {
-    return resolveRef(current.$ref, spec);
-  }
-
+  if (current.$ref) return resolveRef(current.$ref, spec);
   return current as SchemaObject;
 }
 
-function generateInterface(
-  name: string,
-  schema: SchemaObject,
-  spec: OpenAPISpec
-): string {
+// ─── interface generation ─────────────────────────────────────────────────────
+
+function generateInterface(name: string, schema: SchemaObject, spec: OpenAPISpec): string {
   if (!schema.properties && !schema.type) {
     return `export type ${name} = Record<string, unknown>;`;
   }
-
   if (schema.type && schema.type !== 'object') {
     return `export type ${name} = ${mapType(schema, spec)};`;
   }
@@ -149,7 +164,6 @@ function generateInterface(
       const safeName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)
         ? propName
         : `'${propName}'`;
-
       lines.push(`  ${safeName}${optional}: ${tsType};`);
     }
   }
@@ -164,16 +178,12 @@ function generateParamsInterface(
   spec: OpenAPISpec
 ): string {
   const lines: string[] = [`export interface ${name} {`];
-
   for (const param of params) {
-    const schema = param.schema
-      ? resolveSchema(param.schema, spec)
-      : null;
+    const schema = param.schema ? resolveSchema(param.schema, spec) : null;
     const tsType = schema ? mapType(schema, spec) : 'string';
     const optional = param.required ? '' : '?';
     lines.push(`  ${param.name}${optional}: ${tsType};`);
   }
-
   lines.push('}');
   return lines.join('\n');
 }
@@ -182,47 +192,31 @@ function mapType(schema: SchemaObject, spec: OpenAPISpec): string {
   if (schema.enum) {
     return schema.enum.map((v) => (typeof v === 'string' ? `'${v}'` : v)).join(' | ');
   }
-
   if (schema.oneOf || schema.anyOf) {
     const variants = (schema.oneOf || schema.anyOf)!;
     return variants
-      .map((v) => {
-        const resolved = resolveSchema(v, spec);
-        return resolved ? mapType(resolved, spec) : 'unknown';
-      })
+      .map((v) => { const r = resolveSchema(v, spec); return r ? mapType(r, spec) : 'unknown'; })
       .join(' | ');
   }
-
   switch (schema.type) {
-    case 'string':
-      if (schema.format === 'date' || schema.format === 'date-time') return 'string';
-      return 'string';
+    case 'string':    return 'string';
     case 'integer':
-    case 'number':
-      return 'number';
-    case 'boolean':
-      return 'boolean';
+    case 'number':    return 'number';
+    case 'boolean':   return 'boolean';
     case 'array': {
       if (schema.items) {
         const itemSchema = resolveSchema(schema.items, spec);
-        const itemType = itemSchema ? mapType(itemSchema, spec) : 'unknown';
-        return `${itemType}[]`;
+        return `${itemSchema ? mapType(itemSchema, spec) : 'unknown'}[]`;
       }
       return 'unknown[]';
     }
     case 'object': {
       if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
         const valSchema = resolveSchema(schema.additionalProperties as SchemaObject, spec);
-        const valType = valSchema ? mapType(valSchema, spec) : 'unknown';
-        return `Record<string, ${valType}>`;
-      }
-      if (schema.properties) {
-        // Inline object — just use Record for simplicity
-        return 'Record<string, unknown>';
+        return `Record<string, ${valSchema ? mapType(valSchema, spec) : 'unknown'}>`;
       }
       return 'Record<string, unknown>';
     }
-    default:
-      return 'unknown';
+    default: return 'unknown';
   }
 }
