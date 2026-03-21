@@ -3,8 +3,10 @@
 import { Command } from 'commander';
 import { runSetup } from '../src/cli/setup';
 import { runGenerate } from '../src/cli/generate';
+import * as path from 'path';
 
-const pkg = require('../package.json');
+// resolve package.json from dist/bin/ → ../../package.json (root)
+const pkg = require(path.resolve(__dirname, '../../package.json'));
 
 const program = new Command();
 
