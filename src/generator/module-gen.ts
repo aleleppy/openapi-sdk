@@ -1,25 +1,23 @@
 import type { ParsedTag, ParsedOperation, OpenAPISpec } from '../types/openapi';
-import { resolveSchema } from './type-gen';
+import { resolveSchema, buildNameFromPath } from './type-gen';
 
-/**
- * Normalizes accented/special characters to ASCII equivalents.
- * Handles Portuguese chars like ã→a, ç→c, é→e, etc.
- */
 function normalizeStr(str: string): string {
-  return str
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, ''); // strip combining diacritics
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 function toPascalCase(str: string): string {
   return normalizeStr(str)
-    .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
-    .replace(/^[a-z]/, (s) => s.toUpperCase());
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join('');
 }
 
 function toCamelCase(str: string): string {
-  const pascal = toPascalCase(str);
-  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+  const p = toPascalCase(str);
+  return p.charAt(0).toLowerCase() + p.slice(1);
 }
 
 function toKebab(str: string): string {
@@ -30,19 +28,15 @@ function toKebab(str: string): string {
     .toLowerCase();
 }
 
-/**
- * Generates the module file (.module.ts) for a parsed tag.
- * Each module exports an object with methods for each endpoint.
- */
-export function generateModule(
-  tag: ParsedTag,
-  spec: OpenAPISpec
-): string {
+function buildTypeName(method: string, path: string, suffix: string): string {
+  return buildNameFromPath(method, path) + suffix;
+}
+
+export function generateModule(tag: ParsedTag, spec: OpenAPISpec): string {
   const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
   lines.push("import axios from 'axios';");
 
-  // Collect all type imports
-  const typeImports = collectTypeImports(tag, spec);
+  const typeImports = collectTypeImports(tag);
   if (typeImports.length > 0) {
     lines.push(
       `import type { ${typeImports.join(', ')} } from './${toKebab(tag.name)}.types';`
@@ -52,11 +46,7 @@ export function generateModule(
   lines.push('');
   lines.push("const BASE_URL = process.env.API_URL || '';");
   lines.push('');
-
-  // Configure axios instance with api key support
-  lines.push('const instance = axios.create({');
-  lines.push('  baseURL: BASE_URL,');
-  lines.push('});');
+  lines.push('const instance = axios.create({ baseURL: BASE_URL });');
   lines.push('');
 
   const moduleName = toPascalCase(tag.name) + 'Module';
@@ -66,9 +56,7 @@ export function generateModule(
     const op = tag.operations[i];
     const methodLines = generateMethodLines(op, spec);
     lines.push(...methodLines.map((l) => '  ' + l));
-    if (i < tag.operations.length - 1) {
-      lines.push('');
-    }
+    if (i < tag.operations.length - 1) lines.push('');
   }
 
   lines.push('};');
@@ -77,100 +65,52 @@ export function generateModule(
   return lines.join('\n');
 }
 
-function collectTypeImports(tag: ParsedTag, spec: OpenAPISpec): string[] {
+function collectTypeImports(tag: ParsedTag): string[] {
   const imports: string[] = [];
-
   for (const op of tag.operations) {
-    if (op.requestBody) {
-      imports.push(buildTypeName(op.operationId, 'Input'));
-    }
-    if (op.queryParams.length > 0) {
-      imports.push(buildTypeName(op.operationId, 'Params'));
-    }
-    if (op.responseSchema) {
-      imports.push(buildTypeName(op.operationId, 'Response'));
-    }
+    if (op.requestBody)        imports.push(buildTypeName(op.method, op.path, 'Input'));
+    if (op.queryParams.length) imports.push(buildTypeName(op.method, op.path, 'Params'));
+    if (op.responseSchema)     imports.push(buildTypeName(op.method, op.path, 'Response'));
   }
-
-  return imports;
+  return [...new Set(imports)];
 }
 
 function generateMethodLines(op: ParsedOperation, spec: OpenAPISpec): string[] {
-  const fnName = toCamelCase(op.operationId);
-  const params = buildFnParams(op);
-  const returnType = buildReturnType(op, spec);
-  const axiosCall = buildAxiosCall(op, spec);
-
-  return [`${fnName}: (${params}): ${returnType} =>`, `  ${axiosCall},`];
+  const fnName  = toCamelCase(buildNameFromPath(op.method, op.path));
+  const params  = buildFnParams(op);
+  const retType = buildReturnType(op, spec);
+  const call    = buildAxiosCall(op);
+  return [`${fnName}: (${params}): ${retType} =>`, `  ${call},`];
 }
 
 function buildFnParams(op: ParsedOperation): string {
   const parts: string[] = [];
-
-  // Path params
-  for (const p of op.pathParams) {
-    parts.push(`${p.name}: string`);
-  }
-
-  // Request body
-  if (op.requestBody) {
-    const typeName = buildTypeName(op.operationId, 'Input');
-    parts.push(`body: ${typeName}`);
-  }
-
-  // Query params
-  if (op.queryParams.length > 0) {
-    const typeName = buildTypeName(op.operationId, 'Params');
-    parts.push(`params?: ${typeName}`);
-  }
-
+  for (const p of op.pathParams) parts.push(`${p.name}: string`);
+  if (op.requestBody)        parts.push(`body: ${buildTypeName(op.method, op.path, 'Input')}`);
+  if (op.queryParams.length) parts.push(`params?: ${buildTypeName(op.method, op.path, 'Params')}`);
   return parts.join(', ');
 }
 
 function buildReturnType(op: ParsedOperation, spec: OpenAPISpec): string {
   if (!op.responseSchema) return 'Promise<void>';
-
-  const typeName = buildTypeName(op.operationId, 'Response');
-  const schema = resolveSchema(op.responseSchema, spec);
-
-  if (schema?.type === 'array') {
-    return `Promise<${typeName}[]>`;
-  }
-
-  return `Promise<${typeName}>`;
+  const typeName = buildTypeName(op.method, op.path, 'Response');
+  const schema   = resolveSchema(op.responseSchema, spec);
+  return schema?.type === 'array' ? `Promise<${typeName}[]>` : `Promise<${typeName}>`;
 }
 
-function buildAxiosCall(op: ParsedOperation, spec: OpenAPISpec): string {
-  // Build URL with template literals for path params
-  let url = op.path.replace(/\{([^}]+)\}/g, (_, param) => `\${${param}}`);
+function buildAxiosCall(op: ParsedOperation): string {
+  let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => `\${\}`);
   url = '`${BASE_URL}' + url + '`';
-
-  const method = op.method;
-  const hasBody = !!op.requestBody;
+  const hasBody   = !!op.requestBody;
   const hasParams = op.queryParams.length > 0;
-
-  const dataMethods = ['post', 'put', 'patch'];
-
-  if (dataMethods.includes(method)) {
-    if (hasBody && hasParams) {
-      return `instance.${method}(${url}, body, { params }).then(r => r.data)`;
-    }
-    if (hasBody) {
-      return `instance.${method}(${url}, body).then(r => r.data)`;
-    }
-    if (hasParams) {
-      return `instance.${method}(${url}, undefined, { params }).then(r => r.data)`;
-    }
-    return `instance.${method}(${url}).then(r => r.data)`;
+  const m         = op.method;
+  const isData    = ['post', 'put', 'patch'].includes(m);
+  if (isData) {
+    if (hasBody && hasParams) return `instance.${m}(${url}, body, { params }).then(r => r.data)`;
+    if (hasBody)              return `instance.${m}(${url}, body).then(r => r.data)`;
+    if (hasParams)            return `instance.${m}(${url}, undefined, { params }).then(r => r.data)`;
+    return                           `instance.${m}(${url}).then(r => r.data)`;
   }
-
-  // GET, DELETE, HEAD, OPTIONS
-  if (hasParams) {
-    return `instance.${method}(${url}, { params }).then(r => r.data)`;
-  }
-  return `instance.${method}(${url}).then(r => r.data)`;
-}
-
-function buildTypeName(operationId: string, suffix: string): string {
-  return toPascalCase(operationId) + suffix;
+  if (hasParams) return `instance.${m}(${url}, { params }).then(r => r.data)`;
+  return               `instance.${m}(${url}).then(r => r.data)`;
 }
