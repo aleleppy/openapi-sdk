@@ -24,11 +24,6 @@ function buildTypeName(method: string, path: string, suffix: string): string {
   return buildNameFromPath(method, path) + suffix;
 }
 
-/**
- * Derives a PascalCase module name from the tag slug.
- * "restricted-files" → "RestrictedFilesModule"
- * "autenticacao"     → "AutenticacaoModule"
- */
 function slugToModuleName(slug: string): string {
   return slug
     .split('-')
@@ -38,15 +33,12 @@ function slugToModuleName(slug: string): string {
 }
 
 export function generateModule(tag: ParsedTag, spec: OpenAPISpec): string {
-  const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
+  const lines: string[] = ['// AUTO GENERATED \u2014 DO NOT EDIT'];
   lines.push("import axios from 'axios';");
 
   const typeImports = collectTypeImports(tag);
   if (typeImports.length > 0) {
-    // Use tag.slug for the import path (same as the types file name)
-    lines.push(
-      `import type { ${typeImports.join(', ')} } from './${tag.slug}.types';`
-    );
+    lines.push(`import type { ${typeImports.join(', ')} } from './${tag.slug}.types';`);
   }
 
   lines.push('');
@@ -75,7 +67,7 @@ function collectTypeImports(tag: ParsedTag): string[] {
   const imports: string[] = [];
   for (const op of tag.operations) {
     if (op.requestBody)        imports.push(buildTypeName(op.method, op.path, 'Input'));
-    if (op.queryParams.length) imports.push(buildTypeName(op.method, op.path, 'Params'));
+    if (op.queryParams.length) imports.push(buildTypeName(op.method, op.path, 'Query'));
     if (op.responseSchema)     imports.push(buildTypeName(op.method, op.path, 'Response'));
   }
   return [...new Set(imports)];
@@ -89,11 +81,27 @@ function generateMethodLines(op: ParsedOperation, spec: OpenAPISpec): string[] {
   return [`${fnName}: (${params}): ${retType} =>`, `  ${call},`];
 }
 
+/**
+ * Path params  -> params: { id: string; tenantId: string }
+ * Request body -> body: SomeInputType
+ * Query params -> query?: SomeQueryType
+ */
 function buildFnParams(op: ParsedOperation): string {
   const parts: string[] = [];
-  for (const p of op.pathParams) parts.push(`${p.name}: string`);
-  if (op.requestBody)        parts.push(`body: ${buildTypeName(op.method, op.path, 'Input')}`);
-  if (op.queryParams.length) parts.push(`params?: ${buildTypeName(op.method, op.path, 'Params')}`);
+
+  if (op.pathParams.length > 0) {
+    const fields = op.pathParams.map((p) => `${p.name}: string`).join('; ');
+    parts.push(`params: { ${fields} }`);
+  }
+
+  if (op.requestBody) {
+    parts.push(`body: ${buildTypeName(op.method, op.path, 'Input')}`);
+  }
+
+  if (op.queryParams.length > 0) {
+    parts.push(`query?: ${buildTypeName(op.method, op.path, 'Query')}`);
+  }
+
   return parts.join(', ');
 }
 
@@ -105,18 +113,21 @@ function buildReturnType(op: ParsedOperation, spec: OpenAPISpec): string {
 }
 
 function buildAxiosCall(op: ParsedOperation): string {
-  let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => `\${${p}}`);
+  let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => '${params.' + p + '}');
   url = '`${BASE_URL}' + url + '`';
-  const hasBody   = !!op.requestBody;
-  const hasParams = op.queryParams.length > 0;
-  const m         = op.method;
-  const isData    = ['post', 'put', 'patch'].includes(m);
+
+  const hasBody  = !!op.requestBody;
+  const hasQuery = op.queryParams.length > 0;
+  const m        = op.method;
+  const isData   = ['post', 'put', 'patch'].includes(m);
+
   if (isData) {
-    if (hasBody && hasParams) return `instance.${m}(${url}, body, { params }).then(r => r.data)`;
-    if (hasBody)              return `instance.${m}(${url}, body).then(r => r.data)`;
-    if (hasParams)            return `instance.${m}(${url}, undefined, { params }).then(r => r.data)`;
-    return                           `instance.${m}(${url}).then(r => r.data)`;
+    if (hasBody && hasQuery) return `instance.${m}(${url}, body, { params: query }).then(r => r.data)`;
+    if (hasBody)             return `instance.${m}(${url}, body).then(r => r.data)`;
+    if (hasQuery)            return `instance.${m}(${url}, undefined, { params: query }).then(r => r.data)`;
+    return                          `instance.${m}(${url}).then(r => r.data)`;
   }
-  if (hasParams) return `instance.${m}(${url}, { params }).then(r => r.data)`;
-  return               `instance.${m}(${url}).then(r => r.data)`;
+
+  if (hasQuery) return `instance.${m}(${url}, { params: query }).then(r => r.data)`;
+  return              `instance.${m}(${url}).then(r => r.data)`;
 }
