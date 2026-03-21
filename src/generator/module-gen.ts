@@ -2,6 +2,35 @@ import type { ParsedTag, ParsedOperation, OpenAPISpec } from '../types/openapi';
 import { resolveSchema } from './type-gen';
 
 /**
+ * Normalizes accented/special characters to ASCII equivalents.
+ * Handles Portuguese chars like ã→a, ç→c, é→e, etc.
+ */
+function normalizeStr(str: string): string {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // strip combining diacritics
+}
+
+function toPascalCase(str: string): string {
+  return normalizeStr(str)
+    .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
+    .replace(/^[a-z]/, (s) => s.toUpperCase());
+}
+
+function toCamelCase(str: string): string {
+  const pascal = toPascalCase(str);
+  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+function toKebab(str: string): string {
+  return normalizeStr(str)
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
+
+/**
  * Generates the module file (.module.ts) for a parsed tag.
  * Each module exports an object with methods for each endpoint.
  */
@@ -144,22 +173,4 @@ function buildAxiosCall(op: ParsedOperation, spec: OpenAPISpec): string {
 
 function buildTypeName(operationId: string, suffix: string): string {
   return toPascalCase(operationId) + suffix;
-}
-
-function toPascalCase(str: string): string {
-  return str
-    .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
-    .replace(/^./, (s) => s.toUpperCase());
-}
-
-function toCamelCase(str: string): string {
-  const pascal = toPascalCase(str);
-  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
-}
-
-function toKebab(str: string): string {
-  return str
-    .replace(/([a-z])([A-Z])/g, '$1-$2')
-    .replace(/[^a-zA-Z0-9]+/g, '-')
-    .toLowerCase();
 }
