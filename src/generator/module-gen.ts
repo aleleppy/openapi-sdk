@@ -75,34 +75,64 @@ function collectTypeImports(tag: ParsedTag): string[] {
 
 function generateMethodLines(op: ParsedOperation, spec: OpenAPISpec): string[] {
   const fnName  = toCamelCase(buildNameFromPath(op.method, op.path));
-  const params  = buildFnParams(op);
+  const argStr  = buildArgument(op);
   const retType = buildReturnType(op, spec);
   const call    = buildAxiosCall(op);
-  return [`${fnName}: (${params}): ${retType} =>`, `  ${call},`];
+
+  if (!argStr) {
+    // No params at all
+    return [`${fnName}: (): ${retType} =>`, `  ${call},`];
+  }
+
+  return [`${fnName}: (${argStr}): ${retType} =>`, `  ${call},`];
 }
 
 /**
- * Path params  -> params: { id: string; tenantId: string }
- * Request body -> body: SomeInputType
- * Query params -> query?: SomeQueryType
+ * Generates a single destructured argument object.
+ *
+ * No params:
+ *   ()
+ *
+ * Only path params:
+ *   ({ params }: { params: { id: string } })
+ *
+ * Path + body + query:
+ *   ({ params, body, query }: {
+ *     params: { tenantId: string; sellerId: string };
+ *     body: CreateInput;
+ *     query?: ListQuery;
+ *   })
  */
-function buildFnParams(op: ParsedOperation): string {
-  const parts: string[] = [];
+function buildArgument(op: ParsedOperation): string {
+  const hasPath  = op.pathParams.length > 0;
+  const hasBody  = !!op.requestBody;
+  const hasQuery = op.queryParams.length > 0;
 
-  if (op.pathParams.length > 0) {
+  if (!hasPath && !hasBody && !hasQuery) return '';
+
+  const destructured: string[] = [];
+  const typeFields:   string[] = [];
+
+  if (hasPath) {
+    destructured.push('params');
     const fields = op.pathParams.map((p) => `${p.name}: string`).join('; ');
-    parts.push(`params: { ${fields} }`);
+    typeFields.push(`params: { ${fields} }`);
   }
 
-  if (op.requestBody) {
-    parts.push(`body: ${buildTypeName(op.method, op.path, 'Input')}`);
+  if (hasBody) {
+    destructured.push('body');
+    typeFields.push(`body: ${buildTypeName(op.method, op.path, 'Input')}`);
   }
 
-  if (op.queryParams.length > 0) {
-    parts.push(`query?: ${buildTypeName(op.method, op.path, 'Query')}`);
+  if (hasQuery) {
+    destructured.push('query');
+    typeFields.push(`query?: ${buildTypeName(op.method, op.path, 'Query')}`);
   }
 
-  return parts.join(', ');
+  const lhs = `{ ${destructured.join(', ')} }`;
+  const rhs = typeFields.join('; ');
+
+  return `${lhs}: { ${rhs} }`;
 }
 
 function buildReturnType(op: ParsedOperation, spec: OpenAPISpec): string {
@@ -113,6 +143,7 @@ function buildReturnType(op: ParsedOperation, spec: OpenAPISpec): string {
 }
 
 function buildAxiosCall(op: ParsedOperation): string {
+  // Path params accessed via params.xxx
   let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => '${params.' + p + '}');
   url = '`${BASE_URL}' + url + '`';
 
