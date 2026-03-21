@@ -62,9 +62,20 @@ export async function runGenerate(): Promise<void> {
   console.log('🎉 SDK generated successfully!');
 }
 
-function toKebab(str: string): string {
+/**
+ * Normalizes accented/special characters to ASCII equivalents.
+ * Handles Portuguese chars like ã→a, ç→c, é→e, etc.
+ */
+function normalizeStr(str: string): string {
   return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // strip combining diacritics (ã→a, ç→c, é→e...)
+}
+
+function toKebab(str: string): string {
+  return normalizeStr(str)
     .replace(/([a-z])([A-Z])/g, '$1-$2')
     .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') // trim leading/trailing hyphens
     .toLowerCase();
 }
