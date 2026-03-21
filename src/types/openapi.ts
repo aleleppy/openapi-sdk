@@ -30,68 +30,53 @@ export interface PathItem {
 
 export interface OperationObject {
   operationId?: string;
+  tags?: string[];
   summary?: string;
   description?: string;
-  tags?: string[];
-  parameters?: ParameterObject[];
+  parameters?: (ParameterObject | ReferenceObject)[];
   requestBody?: RequestBodyObject | ReferenceObject;
   responses?: Record<string, ResponseObject | ReferenceObject>;
-  security?: Array<Record<string, string[]>>;
 }
 
 export interface ParameterObject {
   name: string;
-  in: 'query' | 'header' | 'path' | 'cookie';
+  in: 'path' | 'query' | 'header' | 'cookie';
   required?: boolean;
-  description?: string;
   schema?: SchemaObject | ReferenceObject;
+  description?: string;
+}
+
+export interface RequestBodyObject {
+  content: Record<string, { schema?: SchemaObject | ReferenceObject }>;
+  required?: boolean;
+}
+
+export interface ResponseObject {
+  description?: string;
+  content?: Record<string, { schema?: SchemaObject | ReferenceObject }>;
 }
 
 export interface SchemaObject {
   type?: string;
   format?: string;
   properties?: Record<string, SchemaObject | ReferenceObject>;
-  required?: string[];
   items?: SchemaObject | ReferenceObject;
-  enum?: (string | number)[];
+  required?: string[];
+  enum?: (string | number | boolean)[];
   allOf?: (SchemaObject | ReferenceObject)[];
   oneOf?: (SchemaObject | ReferenceObject)[];
   anyOf?: (SchemaObject | ReferenceObject)[];
-  $ref?: string;
+  additionalProperties?: SchemaObject | ReferenceObject | boolean;
   description?: string;
+  example?: unknown;
   nullable?: boolean;
-  default?: unknown;
-  additionalProperties?: boolean | SchemaObject | ReferenceObject;
+  $ref?: string;
 }
 
 export interface ReferenceObject {
   $ref: string;
 }
 
-export interface RequestBodyObject {
-  description?: string;
-  required?: boolean;
-  content?: Record<string, MediaTypeObject>;
-  $ref?: string;
-}
-
-export interface ResponseObject {
-  description?: string;
-  content?: Record<string, MediaTypeObject>;
-  $ref?: string;
-}
-
-export interface MediaTypeObject {
-  schema?: SchemaObject | ReferenceObject;
-}
-
-export interface SchemaConfig {
-  url: string;
-  apiKey?: string;
-  output: string;
-}
-
-// Parsed operation used internally by the generator
 export interface ParsedOperation {
   method: string;
   path: string;
@@ -100,15 +85,17 @@ export interface ParsedOperation {
   summary?: string;
   pathParams: ParameterObject[];
   queryParams: ParameterObject[];
-  requestBody?: SchemaObject | ReferenceObject | null;
-  responseSchema?: SchemaObject | ReferenceObject | null;
+  requestBody: SchemaObject | ReferenceObject | null;
+  responseSchema: SchemaObject | ReferenceObject | null;
 }
 
 export interface ParsedTag {
   name: string;
+  /** URL-prefix-based slug — used as folder/file name (e.g. "restricted-files") */
+  slug: string;
   operations: ParsedOperation[];
 }
 
 export function isReferenceObject(obj: unknown): obj is ReferenceObject {
-  return typeof obj === 'object' && obj !== null && '$ref' in obj;
+  return typeof obj === 'object' && obj !== null && '\$ref' in obj;
 }
