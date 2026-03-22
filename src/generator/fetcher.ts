@@ -31,14 +31,28 @@ export class OpenAPIFetcher {
       if (!config.name)   throw new Error('schema.json entry is missing the "name" field.');
     }
 
+    for (const config of arr) {
+      const envKey = config.name.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase() + '_KEY';
+      if (!config.apiKey) {
+        config.apiKey = process.env[envKey];
+      }
+    }
+
     return arr;
   }
 
   saveConfigs(configs: SchemaConfig[]): void {
-    fs.writeFileSync(this.filePath, JSON.stringify(configs, null, 2) + '\n', 'utf-8');
+    const toSave = configs.map(({ apiKey, ...rest }) => rest);
+    fs.writeFileSync(this.filePath, JSON.stringify(toSave, null, 2) + '\n', 'utf-8');
   }
 
   async fetch(config: SchemaConfig): Promise<OpenAPISpec> {
+    if (config.apiKey && !config.docUrl.startsWith('https://')) {
+      throw new Error(
+        `docUrl must use HTTPS when apiKey is configured. Received: ${config.docUrl}`,
+      );
+    }
+
     const headers: Record<string, string> = { Accept: 'application/json' };
 
     if (config.apiKey) {

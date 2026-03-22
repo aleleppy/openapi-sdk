@@ -22,9 +22,14 @@ export class SDKSetup {
       console.log('⚠️  schema.json already exists. Overwriting...');
     }
 
-    fs.writeFileSync(this.filePath, JSON.stringify([this.config], null, 2) + '\n', 'utf-8');
+    const { apiKey, ...configWithoutApiKey } = this.config as any;
+    const envKey = (this.config.name || 'my-api').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase() + '_KEY';
+
+    fs.writeFileSync(this.filePath, JSON.stringify([configWithoutApiKey], null, 2) + '\n', 'utf-8');
 
     console.log('✅ schema.json created successfully!');
+    console.log('');
+    console.log('ℹ️  API key: set env var ' + envKey + ' (do not add to schema.json)');
     console.log('');
     console.log('Next steps:');
     console.log('  1. Edit schema.json with your API URL');

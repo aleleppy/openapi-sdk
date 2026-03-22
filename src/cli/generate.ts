@@ -55,11 +55,18 @@ export class SDKGenerator {
         tags = allTags;
       }
 
+      const safeName = config.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const sdkRoot2 = path.resolve(process.cwd(), 'src/sdk');
+      const outputDir = path.resolve(sdkRoot2, safeName);
+      if (!outputDir.startsWith(sdkRoot2 + path.sep) && outputDir !== sdkRoot2) {
+        throw new Error(`Invalid config name (path traversal detected): ${config.name}`);
+      }
+
       entries.push({
         config,
         spec,
         tags,
-        outputDir: path.resolve(process.cwd(), 'src/sdk', config.name),
+        outputDir,
       });
     }
 
