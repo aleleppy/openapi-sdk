@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { runSetup } from '../src/cli/setup';
-import { runGenerate } from '../src/cli/generate';
+import { SDKSetup }     from '../src/cli/setup';
+import { SDKGenerator } from '../src/cli/generate';
 import * as path from 'path';
 
 // resolve package.json from dist/bin/ → ../../package.json (root)
@@ -22,11 +22,11 @@ program
   .option('-k, --api-key <key>', 'API key for authentication')
   .option('-o, --output <dir>', 'Output directory for generated SDK', 'src/sdk')
   .action((options) => {
-    runSetup({
-      url: options.url,
+    new SDKSetup({
+      url:    options.url,
       apiKey: options.apiKey,
       output: options.output,
-    });
+    }).run();
   });
 
 program
@@ -34,7 +34,8 @@ program
   .description('Fetch OpenAPI spec and generate the TypeScript SDK')
   .action(async () => {
     try {
-      await runGenerate();
+      const generator = await SDKGenerator.create();
+      generator.build();
     } catch (err: any) {
       console.error(`❌ Error: ${err.message}`);
       process.exit(1);

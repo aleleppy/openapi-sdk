@@ -1,357 +1,297 @@
 import type {
   OpenAPISpec,
   ParsedTag,
-  ParsedOperation,
   SchemaObject,
   ReferenceObject,
   ParameterObject,
 } from '../types/openapi';
-import { isReferenceObject } from '../types/openapi';
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-function normalizeStr(str: string): string {
-  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-function toPascalCase(str: string): string {
-  return normalizeStr(str)
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .trim()
-    .split(' ')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join('');
-}
-
-export function buildNameFromPath(method: string, path: string): string {
-  const segments = path.split('/').filter(Boolean);
-  const parts = segments.map((seg) => {
-    if (seg.startsWith('{') && seg.endsWith('}')) {
-      return 'By' + toPascalCase(seg.slice(1, -1));
-    }
-    return toPascalCase(seg);
-  });
-  return toPascalCase(method) + parts.join('');
-}
-
-function buildTypeName(method: string, path: string, suffix: string): string {
-  return buildNameFromPath(method, path) + suffix;
-}
-
-// ─── wrapper detection ───────────────────────────────────────────────────────
-
-export function extractDataSchema(
-  schema: SchemaObject,
-  spec: OpenAPISpec,
-): SchemaObject | null {
-  const props = schema.properties || {};
-  if ((props.statusCode || props.status) && props.data) {
-    return resolveSchema(props.data as SchemaObject | ReferenceObject, spec);
-  }
-  return null;
-}
-
-// ─── main export ─────────────────────────────────────────────────────────────
-
-export function generateTypes(tag: ParsedTag, spec: OpenAPISpec): string {
-  const blocks: string[]   = [];
-  const generated          = new Set<string>();
-
-  for (const op of tag.operations) {
-    if (op.requestBody) {
-      const name = buildTypeName(op.method, op.path, 'Input');
-      if (!generated.has(name)) {
-        const schema = resolveSchema(op.requestBody, spec);
-        if (schema) {
-          blocks.push(generateClassBlock(name, schema, spec, 'input'));
-          generated.add(name);
-        }
-      }
-    }
-
-    if (op.queryParams.length > 0) {
-      const name = buildTypeName(op.method, op.path, 'Query');
-      if (!generated.has(name)) {
-        blocks.push(generateQueryClass(name, op.queryParams, spec));
-        generated.add(name);
-      }
-    }
-
-    if (op.responseSchema) {
-      const name = buildTypeName(op.method, op.path, 'Response');
-      if (!generated.has(name)) {
-        const raw = resolveSchema(op.responseSchema, spec);
-        if (raw) {
-          const inner  = extractDataSchema(raw, spec);
-          const schema = inner ?? raw;
-          const unwrapped = schema.type === 'array' && schema.items
-            ? resolveSchema(schema.items, spec) ?? schema
-            : schema;
-          blocks.push(generateClassBlock(name, unwrapped, spec, 'response'));
-          generated.add(name);
-        }
-      }
-    }
-  }
-
-  if (blocks.length === 0) return '// AUTO GENERATED \u2014 DO NOT EDIT\n';
-
-  const lines: string[] = [
-    '// AUTO GENERATED \u2014 DO NOT EDIT',
-    "import { ApiProperty, IntersectionType } from '@nestjs/swagger';",
-    "import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, IsEnum } from 'class-validator';",
-    '',
-    ...blocks.flatMap((b) => [b, '']),
-  ];
-
-  return lines.join('\n');
-}
-
-// ─── class generation ─────────────────────────────────────────────────────────
+import {
+  resolveSchema,
+  extractDataSchema,
+  buildTypeName,
+  toPascalCase,
+} from './helpers';
 
 type Mode = 'input' | 'response';
 
-function generateClassBlock(
-  name: string,
-  schema: SchemaObject,
-  spec: OpenAPISpec,
-  mode: Mode,
-): string {
-  if (!schema.properties) {
-    // No properties — simple type alias
-    return `export type ${name} = ${mapType(schema, spec)};`;
+export class TypeGenerator {
+  private readonly tag:  ParsedTag;
+  private readonly spec: OpenAPISpec;
+
+  constructor(tag: ParsedTag, spec: OpenAPISpec) {
+    this.tag  = tag;
+    this.spec = spec;
   }
 
-  const required  = new Set(schema.required || []);
-  const fieldNames = Object.keys(schema.properties);
+  // ─── public API ──────────────────────────────────────────────────────────────
 
-  if (fieldNames.length === 0) {
-    return `export type ${name} = Record<string, unknown>;`;
+  build(): string {
+    const blocks:    string[] = [];
+    const generated           = new Set<string>();
+
+    for (const op of this.tag.operations) {
+      if (op.requestBody) {
+        const name = buildTypeName(op.method, op.path, 'Input');
+        if (!generated.has(name)) {
+          const schema = resolveSchema(op.requestBody, this.spec);
+          if (schema) {
+            blocks.push(this.generateClassBlock(name, schema, 'input'));
+            generated.add(name);
+          }
+        }
+      }
+
+      if (op.queryParams.length > 0) {
+        const name = buildTypeName(op.method, op.path, 'Query');
+        if (!generated.has(name)) {
+          blocks.push(this.generateQueryClass(name, op.queryParams));
+          generated.add(name);
+        }
+      }
+
+      if (op.responseSchema) {
+        const name = buildTypeName(op.method, op.path, 'Response');
+        if (!generated.has(name)) {
+          const raw = resolveSchema(op.responseSchema, this.spec);
+          if (raw) {
+            const inner     = extractDataSchema(raw, this.spec);
+            const schema    = inner ?? raw;
+            const unwrapped =
+              schema.type === 'array' && schema.items
+                ? resolveSchema(schema.items, this.spec) ?? schema
+                : schema;
+            blocks.push(this.generateClassBlock(name, unwrapped, 'response'));
+            generated.add(name);
+          }
+        }
+      }
+    }
+
+    if (blocks.length === 0) return '// AUTO GENERATED — DO NOT EDIT\n';
+
+    return [
+      '// AUTO GENERATED — DO NOT EDIT',
+      "import { ApiProperty, IntersectionType } from '@nestjs/swagger';",
+      "import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, IsEnum } from 'class-validator';",
+      '',
+      ...blocks.flatMap((b) => [b, '']),
+    ].join('\n');
   }
 
-  const lines: string[] = [];
+  // ─── class block ─────────────────────────────────────────────────────────────
 
-  // One class per field
-  const fieldClassNames: string[] = [];
-  for (const fieldName of fieldNames) {
-    const fieldSchemaOrRef = schema.properties![fieldName];
-    const fieldSchema      = resolveSchema(fieldSchemaOrRef, spec);
-    if (!fieldSchema) continue;
+  private generateClassBlock(name: string, schema: SchemaObject, mode: Mode): string {
+    if (!schema.properties) {
+      return `export type ${name} = ${this.mapType(schema)};`;
+    }
 
-    const isReq       = required.has(fieldName);
-    const className   = toPascalCase(fieldName) + (mode === 'input' ? 'Dto' : 'Res');
-    fieldClassNames.push(className);
+    const required   = new Set(schema.required || []);
+    const fieldNames = Object.keys(schema.properties);
 
-    lines.push(...generateFieldClass(className, fieldName, fieldSchema, isReq, spec, mode));
-    lines.push('');
+    if (fieldNames.length === 0) {
+      return `export type ${name} = Record<string, unknown>;`;
+    }
+
+    const lines:           string[] = [];
+    const fieldClassNames: string[] = [];
+
+    for (const fieldName of fieldNames) {
+      const fieldSchemaOrRef = schema.properties![fieldName];
+      const fieldSchema      = resolveSchema(fieldSchemaOrRef, this.spec);
+      if (!fieldSchema) continue;
+
+      const isReq    = required.has(fieldName);
+      const suffix   = mode === 'input' ? 'Dto' : 'Res';
+      const className = toPascalCase(fieldName) + suffix;
+      fieldClassNames.push(className);
+
+      lines.push(...this.generateFieldClass(className, fieldName, fieldSchema, isReq, mode));
+      lines.push('');
+    }
+
+    if (fieldClassNames.length === 1) {
+      lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
+    } else {
+      lines.push(
+        `export class ${name} extends IntersectionType(`,
+        ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
+        `  ${fieldClassNames[fieldClassNames.length - 1]},`,
+        `) {}`,
+      );
+    }
+
+    return lines.join('\n');
   }
 
-  // Main class
-  if (fieldClassNames.length === 1) {
-    lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
-  } else {
-    lines.push(
-      `export class ${name} extends IntersectionType(`,
-      ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
-      `  ${fieldClassNames[fieldClassNames.length - 1]},`,
-      `) {}`,
-    );
-  }
+  private generateFieldClass(
+    className: string,
+    fieldName: string,
+    schema: SchemaObject,
+    required: boolean,
+    mode: Mode,
+  ): string[] {
+    const tsType     = this.mapType(schema);
+    const apiType    = this.mapApiPropertyType(schema);
+    const example    = schema.example !== undefined ? schema.example : this.defaultExample(schema);
+    const exampleStr = JSON.stringify(example);
+    const optional   = !required;
 
-  return lines.join('\n');
-}
+    const lines: string[] = [`class ${className} {`];
 
-function generateFieldClass(
-  className: string,
-  fieldName: string,
-  schema: SchemaObject,
-  required: boolean,
-  spec: OpenAPISpec,
-  mode: Mode,
-): string[] {
-  const tsType     = mapType(schema, spec);
-  const apiType    = mapApiPropertyType(schema, spec);
-  const example    = schema.example !== undefined ? schema.example : defaultExample(schema);
-  const exampleStr = JSON.stringify(example);
-  const optional   = !required;
-
-  const lines: string[] = [`class ${className} {`];
-
-  // @ApiProperty
-  if (schema.enum) {
-    const enumRef = toPascalCase(fieldName) + 'Enum';
-    lines.push(`  @ApiProperty({ enum: ${enumRef}, enumName: '${enumRef}', example: ${exampleStr}, required: ${!optional} })`);
-  } else {
-    lines.push(`  @ApiProperty({ type: ${apiType}, example: ${exampleStr}, required: ${!optional} })`);
-  }
-
-  // Validators (Input only)
-  if (mode === 'input') {
-    if (optional) lines.push('  @IsOptional()');
     if (schema.enum) {
       const enumRef = toPascalCase(fieldName) + 'Enum';
-      lines.push(`  @IsEnum(${enumRef})`);
+      lines.push(
+        `  @ApiProperty({ enum: ${enumRef}, enumName: '${enumRef}', example: ${exampleStr}, required: ${!optional} })`,
+      );
     } else {
-      switch (schema.type) {
-        case 'string':
-          lines.push('  @IsString()');
-          if (!optional) lines.push('  @IsNotEmpty()');
-          break;
-        case 'integer':
-        case 'number':
-          lines.push('  @IsNumber()');
-          break;
-        case 'boolean':
-          lines.push('  @IsBoolean()');
-          break;
+      lines.push(
+        `  @ApiProperty({ type: ${apiType}, example: ${exampleStr}, required: ${!optional} })`,
+      );
+    }
+
+    if (mode === 'input') {
+      if (optional) lines.push('  @IsOptional()');
+
+      if (schema.enum) {
+        const enumRef = toPascalCase(fieldName) + 'Enum';
+        lines.push(`  @IsEnum(${enumRef})`);
+      } else {
+        switch (schema.type) {
+          case 'string':
+            lines.push('  @IsString()');
+            if (!optional) lines.push('  @IsNotEmpty()');
+            break;
+          case 'integer':
+          case 'number':
+            lines.push('  @IsNumber()');
+            break;
+          case 'boolean':
+            lines.push('  @IsBoolean()');
+            break;
+        }
       }
     }
-  }
 
-  const bang     = optional ? '' : '!';
-  const question = optional ? '?' : '';
-  lines.push(`  ${fieldName}${question}${bang}: ${tsType};`);
-  lines.push('}');
-
-  return lines;
-}
-
-function generateQueryClass(
-  name: string,
-  params: ParameterObject[],
-  spec: OpenAPISpec,
-): string {
-  if (params.length === 0) return `export type ${name} = Record<string, unknown>;`;
-
-  const lines: string[] = [];
-  const fieldClassNames: string[] = [];
-
-  for (const param of params) {
-    const schema    = param.schema ? resolveSchema(param.schema, spec) : null;
-    const className = toPascalCase(param.name) + 'QueryDto';
-    fieldClassNames.push(className);
-    const isReq     = !!param.required;
-    const tsType    = schema ? mapType(schema, spec) : 'string';
-    const apiType   = schema ? mapApiPropertyType(schema, spec) : "'string'";
-    const example   = schema?.example !== undefined ? schema.example : defaultExample(schema ?? { type: 'string' });
-    const optional  = !isReq;
-
-    lines.push(`class ${className} {`);
-    lines.push(`  @ApiProperty({ type: ${apiType}, example: ${JSON.stringify(example)}, required: ${isReq} })`);
-    if (optional) lines.push('  @IsOptional()');
-    if (schema?.type === 'number' || schema?.type === 'integer') {
-      lines.push('  @IsNumber()');
-    } else {
-      lines.push('  @IsString()');
-    }
-    const bang = optional ? '' : '!';
-    const q    = optional ? '?' : '';
-    lines.push(`  ${param.name}${q}${bang}: ${tsType};`);
+    const bang     = optional ? '' : '!';
+    const question = optional ? '?' : '';
+    lines.push(`  ${fieldName}${question}${bang}: ${tsType};`);
     lines.push('}');
-    lines.push('');
+
+    return lines;
   }
 
-  if (fieldClassNames.length === 1) {
-    lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
-  } else {
-    lines.push(
-      `export class ${name} extends IntersectionType(`,
-      ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
-      `  ${fieldClassNames[fieldClassNames.length - 1]},`,
-      `) {}`,
-    );
-  }
+  // ─── query class ─────────────────────────────────────────────────────────────
 
-  return lines.join('\n');
-}
+  private generateQueryClass(name: string, params: ParameterObject[]): string {
+    if (params.length === 0) return `export type ${name} = Record<string, unknown>;`;
 
-// ─── schema resolution ───────────────────────────────────────────────────────
+    const lines:           string[] = [];
+    const fieldClassNames: string[] = [];
 
-export function resolveSchema(
-  schemaOrRef: SchemaObject | ReferenceObject,
-  spec: OpenAPISpec,
-): SchemaObject | null {
-  if (isReferenceObject(schemaOrRef)) return resolveRef(schemaOrRef.$ref, spec);
+    for (const param of params) {
+      const schema    = param.schema ? resolveSchema(param.schema, this.spec) : null;
+      const className = toPascalCase(param.name) + 'QueryDto';
+      fieldClassNames.push(className);
 
-  if (schemaOrRef.allOf) {
-    const merged: SchemaObject = { type: 'object', properties: {}, required: [] };
-    for (const item of schemaOrRef.allOf) {
-      const r = resolveSchema(item, spec);
-      if (r?.properties) merged.properties = { ...merged.properties, ...r.properties };
-      if (r?.required)   merged.required   = [...(merged.required || []), ...r.required];
-    }
-    return merged;
-  }
+      const isReq   = !!param.required;
+      const tsType  = schema ? this.mapType(schema) : 'string';
+      const apiType = schema ? this.mapApiPropertyType(schema) : "'string'";
+      const example =
+        schema?.example !== undefined ? schema.example : this.defaultExample(schema ?? { type: 'string' });
+      const optional = !isReq;
 
-  return schemaOrRef;
-}
-
-function resolveRef(ref: string, spec: OpenAPISpec): SchemaObject | null {
-  const parts = ref.replace('#/', '').split('/');
-  let current: any = spec;
-  for (const p of parts) {
-    current = current?.[p];
-    if (!current) return null;
-  }
-  if (current.$ref) return resolveRef(current.$ref, spec);
-  return current as SchemaObject;
-}
-
-// ─── type mapping ─────────────────────────────────────────────────────────────
-
-function mapType(schema: SchemaObject, spec: OpenAPISpec): string {
-  if (schema.enum) {
-    return schema.enum.map((v) => (typeof v === 'string' ? `'${v}'` : v)).join(' | ');
-  }
-  if (schema.oneOf || schema.anyOf) {
-    return (schema.oneOf || schema.anyOf)!
-      .map((v) => { const r = resolveSchema(v, spec); return r ? mapType(r, spec) : 'unknown'; })
-      .join(' | ');
-  }
-  switch (schema.type) {
-    case 'string':  return 'string';
-    case 'integer':
-    case 'number':  return 'number';
-    case 'boolean': return 'boolean';
-    case 'array': {
-      if (schema.items) {
-        const item = resolveSchema(schema.items, spec);
-        return `${item ? mapType(item, spec) : 'unknown'}[]`;
+      lines.push(`class ${className} {`);
+      lines.push(
+        `  @ApiProperty({ type: ${apiType}, example: ${JSON.stringify(example)}, required: ${isReq} })`,
+      );
+      if (optional) lines.push('  @IsOptional()');
+      if (schema?.type === 'number' || schema?.type === 'integer') {
+        lines.push('  @IsNumber()');
+      } else {
+        lines.push('  @IsString()');
       }
-      return 'unknown[]';
+      const bang = optional ? '' : '!';
+      const q    = optional ? '?' : '';
+      lines.push(`  ${param.name}${q}${bang}: ${tsType};`);
+      lines.push('}');
+      lines.push('');
     }
-    case 'object': {
-      if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
-        const val = resolveSchema(schema.additionalProperties as SchemaObject, spec);
-        return `Record<string, ${val ? mapType(val, spec) : 'unknown'}>`;
+
+    if (fieldClassNames.length === 1) {
+      lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
+    } else {
+      lines.push(
+        `export class ${name} extends IntersectionType(`,
+        ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
+        `  ${fieldClassNames[fieldClassNames.length - 1]},`,
+        `) {}`,
+      );
+    }
+
+    return lines.join('\n');
+  }
+
+  // ─── type mapping ─────────────────────────────────────────────────────────────
+
+  private mapType(schema: SchemaObject): string {
+    if (schema.enum) {
+      return schema.enum.map((v) => (typeof v === 'string' ? `'${v}'` : v)).join(' | ');
+    }
+    if (schema.oneOf || schema.anyOf) {
+      return (schema.oneOf || schema.anyOf)!
+        .map((v) => {
+          const r = resolveSchema(v, this.spec);
+          return r ? this.mapType(r) : 'unknown';
+        })
+        .join(' | ');
+    }
+    switch (schema.type) {
+      case 'string':  return 'string';
+      case 'integer':
+      case 'number':  return 'number';
+      case 'boolean': return 'boolean';
+      case 'array': {
+        if (schema.items) {
+          const item = resolveSchema(schema.items, this.spec);
+          return `${item ? this.mapType(item) : 'unknown'}[]`;
+        }
+        return 'unknown[]';
       }
-      return 'Record<string, unknown>';
+      case 'object': {
+        if (
+          schema.additionalProperties &&
+          typeof schema.additionalProperties === 'object'
+        ) {
+          const val = resolveSchema(schema.additionalProperties as SchemaObject, this.spec);
+          return `Record<string, ${val ? this.mapType(val) : 'unknown'}>`;
+        }
+        return 'Record<string, unknown>';
+      }
+      default: return 'unknown';
     }
-    default: return 'unknown';
   }
-}
 
-function mapApiPropertyType(schema: SchemaObject, spec: OpenAPISpec): string {
-  if (schema.enum) return "'string'";
-  switch (schema.type) {
-    case 'string':  return "'string'";
-    case 'integer':
-    case 'number':  return "'number'";
-    case 'boolean': return "'boolean'";
-    case 'array':   return "'array'";
-    case 'object':  return "'object'";
-    default:        return "'string'";
+  private mapApiPropertyType(schema: SchemaObject): string {
+    if (schema.enum) return "'string'";
+    switch (schema.type) {
+      case 'string':  return "'string'";
+      case 'integer':
+      case 'number':  return "'number'";
+      case 'boolean': return "'boolean'";
+      case 'array':   return "'array'";
+      case 'object':  return "'object'";
+      default:        return "'string'";
+    }
   }
-}
 
-function defaultExample(schema: SchemaObject): unknown {
-  if (schema.enum) return schema.enum[0] ?? 'VALUE';
-  switch (schema.type) {
-    case 'string':  return 'example';
-    case 'integer':
-    case 'number':  return 0;
-    case 'boolean': return true;
-    default:        return null;
+  private defaultExample(schema: SchemaObject): unknown {
+    if (schema.enum) return schema.enum[0] ?? 'VALUE';
+    switch (schema.type) {
+      case 'string':  return 'example';
+      case 'integer':
+      case 'number':  return 0;
+      case 'boolean': return true;
+      default:        return null;
+    }
   }
 }
