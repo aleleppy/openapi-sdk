@@ -72,13 +72,20 @@ export function buildTypeName(method: string, pathStr: string, suffix: string): 
 export function resolveSchema(
   schemaOrRef: SchemaObject | ReferenceObject,
   spec: OpenAPISpec,
+  visited: Set<string> = new Set(),
 ): SchemaObject | null {
-  if (isReferenceObject(schemaOrRef)) return resolveRef(schemaOrRef.$ref, spec);
+  if (isReferenceObject(schemaOrRef)) {
+    if (visited.has(schemaOrRef.$ref)) {
+      return { type: 'object', description: '(circular ref)' };
+    }
+    const next = new Set(visited).add(schemaOrRef.$ref);
+    return resolveRef(schemaOrRef.$ref, spec, next);
+  }
 
   if (schemaOrRef.allOf) {
     const merged: SchemaObject = { type: 'object', properties: {}, required: [] };
     for (const item of schemaOrRef.allOf) {
-      const r = resolveSchema(item, spec);
+      const r = resolveSchema(item, spec, visited);
       if (r?.properties) merged.properties = { ...merged.properties, ...r.properties };
       if (r?.required)   merged.required   = [...(merged.required || []), ...r.required];
     }
@@ -88,14 +95,20 @@ export function resolveSchema(
   return schemaOrRef;
 }
 
-function resolveRef(ref: string, spec: OpenAPISpec): SchemaObject | null {
+function resolveRef(ref: string, spec: OpenAPISpec, visited: Set<string>): SchemaObject | null {
   const parts = ref.replace('#/', '').split('/');
   let current: any = spec;
   for (const p of parts) {
     current = current?.[p];
     if (!current) return null;
   }
-  if (current.$ref) return resolveRef(current.$ref, spec);
+  if (current.$ref) {
+    if (visited.has(current.$ref)) {
+      return { type: 'object', description: '(circular ref)' };
+    }
+    const next = new Set(visited).add(current.$ref);
+    return resolveRef(current.$ref, spec, next);
+  }
   return current as SchemaObject;
 }
 

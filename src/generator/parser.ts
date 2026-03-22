@@ -52,6 +52,24 @@ export class OpenAPIParser {
       }
     }
 
+    // Deduplicate operation names within each tag
+    for (const [, operations] of tagMap) {
+      const nameCount = new Map<string, number>();
+      // First pass: count occurrences
+      for (const op of operations) {
+        nameCount.set(op.name, (nameCount.get(op.name) ?? 0) + 1);
+      }
+      // Second pass: rename duplicates
+      const nameSeq = new Map<string, number>();
+      for (const op of operations) {
+        if ((nameCount.get(op.name) ?? 1) > 1) {
+          const seq = (nameSeq.get(op.name) ?? 0) + 1;
+          nameSeq.set(op.name, seq);
+          op.name = op.name + seq;
+        }
+      }
+    }
+
     return Array.from(tagMap.entries()).map(([name, operations]) => ({
       name,
       slug: this.computeSlug(operations),
