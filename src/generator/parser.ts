@@ -37,8 +37,9 @@ export class OpenAPIParser {
           ...(operation.parameters || []),
         ] as ParameterObject[];
 
-        const pathParams  = allParams.filter((p) => p.in === 'path');
-        const queryParams = allParams.filter((p) => p.in === 'query');
+        const pathParams   = allParams.filter((p) => p.in === 'path');
+        const queryParams  = allParams.filter((p) => p.in === 'query');
+        const headerParams = allParams.filter((p) => p.in === 'header');
 
         const requestBody  = this.resolveRequestBody(operation);
         const responseSchema = this.resolveResponseSchema(operation);
@@ -47,7 +48,7 @@ export class OpenAPIParser {
         tagMap.get(tag)!.push({
           method, path: pathStr, operationId, name, tag,
           summary: operation.summary,
-          pathParams, queryParams, requestBody, responseSchema,
+          pathParams, queryParams, headerParams, requestBody, responseSchema,
         });
       }
     }

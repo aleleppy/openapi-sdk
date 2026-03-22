@@ -76,9 +76,9 @@ export class ModuleGenerator {
   private collectTypeImports(): string[] {
     const imports: string[] = [];
     for (const op of this.tag.operations) {
-      if (op.requestBody)        imports.push(operationTypeName(op.name, 'InputDto'));
-      if (op.queryParams.length) imports.push(operationTypeName(op.name, 'Query'));
-      if (op.responseSchema)     imports.push(operationTypeName(op.name, 'Response'));
+      if (op.requestBody)              imports.push(operationTypeName(op.name, 'InputDto'));
+      if (op.queryParams.length)       imports.push(operationTypeName(op.name, 'Query'));
+      if (op.responseSchema)           imports.push(operationTypeName(op.name, 'Response'));
       for (const p of op.pathParams) {
         const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
         if (schema?.enum) imports.push(toPascalCase(p.name) + 'Enum');
@@ -88,14 +88,15 @@ export class ModuleGenerator {
   }
 
   private generateMethodLines(op: ParsedOperation): string[] {
-    const fnName  = op.name;
-    const argStr  = this.buildArgument(op);
-    const retType = this.buildReturnType(op);
+    const fnName     = op.name;
+    const argStr     = this.buildArgument(op);
+    const retType    = this.buildReturnType(op);
 
-    const hasPath  = op.pathParams.length > 0;
-    const hasBody  = !!op.requestBody;
-    const hasQuery = op.queryParams.length > 0;
-    const m        = op.method;
+    const hasPath    = op.pathParams.length > 0;
+    const hasBody    = !!op.requestBody;
+    const hasQuery   = op.queryParams.length > 0;
+    const hasHeaders = (op.headerParams?.length ?? 0) > 0;
+    const m          = op.method;
 
     // Build URL expression
     let urlExpr: string;
@@ -116,7 +117,8 @@ export class ModuleGenerator {
     }
 
     const callParts = [`url: ${urlExpr}`];
-    if (hasBody) callParts.push('body');
+    if (hasBody)    callParts.push('body');
+    if (hasHeaders) callParts.push('headers');
     lines.push(`  return this.${m}({ ${callParts.join(', ')} });`);
 
     lines.push('}');
@@ -141,6 +143,13 @@ export class ModuleGenerator {
     }
     if (hasBody)  args.push({ name: 'body', type: operationTypeName(op.name, 'InputDto'), optional: false });
     if (hasQuery) args.push({ name: 'query', type: operationTypeName(op.name, 'Query'), optional: true });
+    if ((op.headerParams?.length ?? 0) > 0) {
+      const headerFields = op.headerParams.map((p) => {
+        const q = p.required ? '' : '?';
+        return `'${p.name}'${q}: string`;
+      }).join('; ');
+      args.push({ name: 'headers', type: `{ ${headerFields} }`, optional: true });
+    }
 
     if (args.length === 1) {
       const a = args[0];

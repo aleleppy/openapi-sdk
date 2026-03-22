@@ -70,7 +70,6 @@ export interface SchemaObject {
   description?: string;
   example?: unknown;
   nullable?: boolean;
-  $ref?: string;
 }
 
 export interface ReferenceObject {
@@ -87,6 +86,7 @@ export interface ParsedOperation {
   summary?: string;
   pathParams: ParameterObject[];
   queryParams: ParameterObject[];
+  headerParams: ParameterObject[];
   requestBody: SchemaObject | ReferenceObject | null;
   responseSchema: SchemaObject | ReferenceObject | null;
 }
