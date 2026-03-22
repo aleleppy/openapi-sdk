@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import prettier from 'prettier';
 
 export class Source {
@@ -7,19 +7,22 @@ export class Source {
 
   constructor(params: { path: string; data?: string }) {
     const { path, data } = params;
-
     this.path = path;
     this.data = data ?? '';
   }
 
-  async save() {
-    const options   = await prettier.resolveConfig(process.cwd());
-    const formatted = await prettier.format(this.data, { singleQuote: true, ...options, filepath: this.path });
-
-    writeFileSync(this.path, formatted, 'utf8');
+  async save(): Promise<void> {
+    let output = this.data;
+    try {
+      const options = await prettier.resolveConfig(process.cwd());
+      output = await prettier.format(this.data, { singleQuote: true, ...options, filepath: this.path });
+    } catch (err: any) {
+      console.warn(`⚠️  Prettier failed for ${this.path}, saving unformatted: ${err.message}`);
+    }
+    await writeFile(this.path, output, 'utf-8');
   }
 
-  changeData(data: string) {
+  changeData(data: string): void {
     this.data = data;
   }
 }
