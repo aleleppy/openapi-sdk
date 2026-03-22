@@ -7,6 +7,10 @@
   "bin": {
     "openapi-sdk": "./dist/bin/cli.js"
   },
+  "files": [
+    "dist",
+    "schemas"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/bin/cli.ts",

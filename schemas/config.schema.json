@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "openapi-sdk config",
+  "description": "Configuração do openapi-sdk. Pode ser um único objeto ou um array de objetos para múltiplas APIs.",
+  "oneOf": [
+    { "$ref": "#/definitions/SchemaConfig" },
+    {
+      "type": "array",
+      "items": { "$ref": "#/definitions/SchemaConfig" },
+      "minItems": 1
+    }
+  ],
+  "definitions": {
+    "SchemaConfig": {
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Configuração de uma API a ser gerada.",
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "description": "Caminho para o schema de validação (usado pelo editor para autocomplete)."
+        },
+        "docUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL do spec OpenAPI 3.x (ex: https://api.example.com/openapi.json)."
+        },
+        "apiUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL base da API usada nas chamadas axios geradas (ex: https://api.example.com)."
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "Bearer token para autenticação ao buscar o spec. Use prefixo '$' para referenciar variável de ambiente (ex: '$MY_API_KEY')."
+        },
+        "output": {
+          "type": "string",
+          "description": "Pasta de saída dos arquivos gerados (padrão: src/sdk).",
+          "default": "src/sdk"
+        },
+        "selectedTags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Lista de tags a serem geradas. Se omitido, todas as tags são geradas."
+        }
+      },
+      "required": ["docUrl", "apiUrl", "output"]
+    }
+  }
+}
