@@ -20,7 +20,7 @@ export class ModuleGenerator {
 
   build(): string {
     const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
-    lines.push("import axios from 'axios';");
+    lines.push("import { ApiDefaultService } from '../api-default-service';");
 
     const typeImports = this.collectTypeImports();
     if (typeImports.length > 0) {
@@ -30,12 +30,9 @@ export class ModuleGenerator {
     }
 
     lines.push('');
-    lines.push("const BASE_URL = process.env.API_URL || '';");
-    lines.push('');
-    lines.push('const instance = axios.create({ baseURL: BASE_URL });');
-    lines.push('');
 
-    lines.push(`export const ${this.slugToModuleName()} = {`);
+    const className = this.slugToClassName();
+    lines.push(`export class ${className} extends ApiDefaultService {`);
 
     for (let i = 0; i < this.tag.operations.length; i++) {
       const methodLines = this.generateMethodLines(this.tag.operations[i]);
@@ -43,20 +40,20 @@ export class ModuleGenerator {
       if (i < this.tag.operations.length - 1) lines.push('');
     }
 
-    lines.push('};');
+    lines.push('}');
     lines.push('');
     return lines.join('\n');
   }
 
   // ─── helpers ─────────────────────────────────────────────────────────────────
 
-  private slugToModuleName(): string {
+  private slugToClassName(): string {
     return (
       this.tag.slug
         .split('-')
         .filter(Boolean)
         .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join('') + 'Module'
+        .join('') + 'Service'
     );
   }
 
@@ -75,44 +72,35 @@ export class ModuleGenerator {
     const argStr  = this.buildArgument(op);
     const retType = this.buildReturnType(op);
 
-    const wrapped = (() => {
-      if (!op.responseSchema) return false;
-      const raw = resolveSchema(op.responseSchema, this.spec);
-      return raw ? extractDataSchema(raw, this.spec) !== null : false;
-    })();
-
-    const respTypeName  = op.responseSchema ? buildTypeName(op.method, op.path, 'Response') : 'void';
-    const axiosGeneric  = wrapped ? `{ data: ${respTypeName} }` : respTypeName;
-
-    let url = op.path.replace(/\{([^}]+)\}/g, (_, p) => '${params.' + p + '}');
-    url     = '`${BASE_URL}' + url + '`';
-
+    const hasPath  = op.pathParams.length > 0;
     const hasBody  = !!op.requestBody;
     const hasQuery = op.queryParams.length > 0;
     const m        = op.method;
-    const isData   = ['post', 'put', 'patch'].includes(m);
 
-    let axiosExpr: string;
-    if (isData) {
-      if (hasBody && hasQuery) axiosExpr = `instance.${m}<${axiosGeneric}>(${url}, body, { params: query })`;
-      else if (hasBody)        axiosExpr = `instance.${m}<${axiosGeneric}>(${url}, body)`;
-      else if (hasQuery)       axiosExpr = `instance.${m}<${axiosGeneric}>(${url}, undefined, { params: query })`;
-      else                     axiosExpr = `instance.${m}<${axiosGeneric}>(${url})`;
+    // Build URL expression
+    let urlExpr: string;
+    if (hasPath) {
+      urlExpr = '`' + op.path.replace(/\{([^}]+)\}/g, (_, p) => '${params.' + p + '}') + '`';
     } else {
-      axiosExpr = hasQuery
-        ? `instance.${m}<${axiosGeneric}>(${url}, { params: query })`
-        : `instance.${m}<${axiosGeneric}>(${url})`;
+      urlExpr = `'${op.path}'`;
     }
 
-    const accessor = wrapped ? 'response.data.data' : 'response.data';
-    const argPart  = argStr ? `(${argStr})` : '()';
+    const argPart = argStr ? `(${argStr})` : '()';
+    const lines: string[] = [];
 
-    return [
-      `${fnName}: async ${argPart}: ${retType} => {`,
-      `  const response = await ${axiosExpr};`,
-      `  return ${accessor};`,
-      `},`,
-    ];
+    lines.push(`async ${fnName}${argPart}: ${retType} {`);
+
+    if (hasQuery) {
+      lines.push(`  const qs = query ? \`?\${new URLSearchParams(query as any).toString()}\` : '';`);
+      urlExpr = `\`\${${urlExpr}}\${qs}\``;
+    }
+
+    const callParts = [`url: ${urlExpr}`];
+    if (hasBody) callParts.push('body');
+    lines.push(`  return this.${m}({ ${callParts.join(', ')} });`);
+
+    lines.push('}');
+    return lines;
   }
 
   private buildArgument(op: ParsedOperation): string {
@@ -140,4 +128,6 @@ export class ModuleGenerator {
     const schema = inner ?? raw;
     return schema?.type === 'array' ? `Promise<${typeName}[]>` : `Promise<${typeName}>`;
   }
+
+
 }

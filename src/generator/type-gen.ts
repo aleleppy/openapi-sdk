@@ -17,6 +17,8 @@ type Mode = 'input' | 'response';
 export class TypeGenerator {
   private readonly tag:  ParsedTag;
   private readonly spec: OpenAPISpec;
+  private readonly emittedHelpers = new Set<string>();
+  private readonly emittedEnums   = new Map<string, unknown[]>();
 
   constructor(tag: ParsedTag, spec: OpenAPISpec) {
     this.tag  = tag;
@@ -69,11 +71,40 @@ export class TypeGenerator {
 
     if (blocks.length === 0) return '// AUTO GENERATED — DO NOT EDIT\n';
 
+    const enumBlocks: string[] = [];
+    for (const [enumName, values] of this.emittedEnums) {
+      const members = values
+        .map((v) => `  ${String(v)} = '${String(v)}',`)
+        .join('\n');
+      enumBlocks.push(`enum ${enumName} {\n${members}\n}`);
+    }
+
+    const allContent = [...enumBlocks, ...blocks].join('\n');
+
+    const swaggerImports: string[] = [];
+    if (allContent.includes('@ApiProperty'))    swaggerImports.push('ApiProperty');
+    if (allContent.includes('IntersectionType')) swaggerImports.push('IntersectionType');
+
+    const validatorImports: string[] = [];
+    if (allContent.includes('@IsString'))   validatorImports.push('IsString');
+    if (allContent.includes('@IsNotEmpty')) validatorImports.push('IsNotEmpty');
+    if (allContent.includes('@IsNumber'))   validatorImports.push('IsNumber');
+    if (allContent.includes('@IsBoolean'))  validatorImports.push('IsBoolean');
+    if (allContent.includes('@IsOptional')) validatorImports.push('IsOptional');
+    if (allContent.includes('@IsEnum'))     validatorImports.push('IsEnum');
+
+    const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
+    if (swaggerImports.length > 0) {
+      lines.push(`import { ${swaggerImports.join(', ')} } from '@nestjs/swagger';`);
+    }
+    if (validatorImports.length > 0) {
+      lines.push(`import { ${validatorImports.join(', ')} } from 'class-validator';`);
+    }
+    lines.push('');
+
     return [
-      '// AUTO GENERATED — DO NOT EDIT',
-      "import { ApiProperty, IntersectionType } from '@nestjs/swagger';",
-      "import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, IsEnum } from 'class-validator';",
-      '',
+      ...lines,
+      ...enumBlocks.flatMap((b) => [b, '']),
       ...blocks.flatMap((b) => [b, '']),
     ].join('\n');
   }
@@ -105,8 +136,11 @@ export class TypeGenerator {
       const className = toPascalCase(fieldName) + suffix;
       fieldClassNames.push(className);
 
-      lines.push(...this.generateFieldClass(className, fieldName, fieldSchema, isReq, mode));
-      lines.push('');
+      if (!this.emittedHelpers.has(className)) {
+        lines.push(...this.generateFieldClass(className, fieldName, fieldSchema, isReq, mode));
+        lines.push('');
+        this.emittedHelpers.add(className);
+      }
     }
 
     if (fieldClassNames.length === 1) {
@@ -129,17 +163,74 @@ export class TypeGenerator {
     schema: SchemaObject,
     required: boolean,
     mode: Mode,
+    prefix: string = '',
   ): string[] {
-    const tsType     = this.mapType(schema);
+    const optional = !required;
+
+    // ─── nested object → generate sub-classes + IntersectionType ───────────
+    if (schema.properties && Object.keys(schema.properties).length > 0) {
+      const nestedReq    = new Set(schema.required || []);
+      const fieldNames   = Object.keys(schema.properties);
+      const lines:           string[] = [];
+      const nestedClassNames: string[] = [];
+      const nestedPrefix = prefix + toPascalCase(fieldName);
+
+      for (const nestedField of fieldNames) {
+        const nestedSchemaOrRef = schema.properties![nestedField];
+        const nestedSchema      = resolveSchema(nestedSchemaOrRef, this.spec);
+        if (!nestedSchema) continue;
+
+        const isReq       = nestedReq.has(nestedField);
+        const suffix      = mode === 'input' ? 'Dto' : 'Res';
+        const nestedClass = nestedPrefix + toPascalCase(nestedField) + suffix;
+        nestedClassNames.push(nestedClass);
+
+        if (!this.emittedHelpers.has(nestedClass)) {
+          lines.push(...this.generateFieldClass(nestedClass, nestedField, nestedSchema, isReq, mode, nestedPrefix));
+          lines.push('');
+          this.emittedHelpers.add(nestedClass);
+        }
+      }
+
+      // combined type class for the nested object
+      const typeName = nestedPrefix + (mode === 'input' ? 'Type' : 'Type');
+      if (nestedClassNames.length === 1) {
+        lines.push(`class ${typeName} extends ${nestedClassNames[0]} {}`);
+      } else if (nestedClassNames.length > 1) {
+        lines.push(
+          `class ${typeName} extends IntersectionType(`,
+          ...nestedClassNames.slice(0, -1).map((c) => `  ${c},`),
+          `  ${nestedClassNames[nestedClassNames.length - 1]},`,
+          `) {}`,
+        );
+      }
+      lines.push('');
+
+      // parent field class referencing the nested type
+      lines.push(`class ${className} {`);
+      lines.push(`  @ApiProperty({ type: ${typeName}, required: ${!optional} })`);
+      if (mode === 'input' && optional) lines.push('  @IsOptional()');
+      const bang     = optional ? '' : '!';
+      const question = optional ? '?' : '';
+      lines.push(`  ${fieldName}${question}${bang}: ${typeName};`);
+      lines.push('}');
+
+      return lines;
+    }
+
+    // ─── primitive / enum / array field ────────────────────────────────────
+    const tsType     = schema.enum ? toPascalCase(fieldName) + 'Enum' : this.mapType(schema);
     const apiType    = this.mapApiPropertyType(schema);
     const example    = schema.example !== undefined ? schema.example : this.defaultExample(schema);
-    const exampleStr = JSON.stringify(example);
-    const optional   = !required;
+    const exampleStr = typeof example === 'string' ? `'${example}'` : JSON.stringify(example);
 
     const lines: string[] = [`class ${className} {`];
 
     if (schema.enum) {
       const enumRef = toPascalCase(fieldName) + 'Enum';
+      if (!this.emittedEnums.has(enumRef)) {
+        this.emittedEnums.set(enumRef, schema.enum);
+      }
       lines.push(
         `  @ApiProperty({ enum: ${enumRef}, enumName: '${enumRef}', example: ${exampleStr}, required: ${!optional} })`,
       );
@@ -193,28 +284,31 @@ export class TypeGenerator {
       const className = toPascalCase(param.name) + 'QueryDto';
       fieldClassNames.push(className);
 
-      const isReq   = !!param.required;
-      const tsType  = schema ? this.mapType(schema) : 'string';
-      const apiType = schema ? this.mapApiPropertyType(schema) : "'string'";
-      const example =
-        schema?.example !== undefined ? schema.example : this.defaultExample(schema ?? { type: 'string' });
-      const optional = !isReq;
+      if (!this.emittedHelpers.has(className)) {
+        const isReq   = !!param.required;
+        const tsType  = schema ? this.mapType(schema) : 'string';
+        const apiType = schema ? this.mapApiPropertyType(schema) : "'string'";
+        const example =
+          schema?.example !== undefined ? schema.example : this.defaultExample(schema ?? { type: 'string' });
+        const optional = !isReq;
 
-      lines.push(`class ${className} {`);
-      lines.push(
-        `  @ApiProperty({ type: ${apiType}, example: ${JSON.stringify(example)}, required: ${isReq} })`,
-      );
-      if (optional) lines.push('  @IsOptional()');
-      if (schema?.type === 'number' || schema?.type === 'integer') {
-        lines.push('  @IsNumber()');
-      } else {
-        lines.push('  @IsString()');
+        lines.push(`class ${className} {`);
+        lines.push(
+          `  @ApiProperty({ type: ${apiType}, example: ${typeof example === 'string' ? `'${example}'` : JSON.stringify(example)}, required: ${isReq} })`,
+        );
+        if (optional) lines.push('  @IsOptional()');
+        if (schema?.type === 'number' || schema?.type === 'integer') {
+          lines.push('  @IsNumber()');
+        } else {
+          lines.push('  @IsString()');
+        }
+        const bang = optional ? '' : '!';
+        const q    = optional ? '?' : '';
+        lines.push(`  ${param.name}${q}${bang}: ${tsType};`);
+        lines.push('}');
+        lines.push('');
+        this.emittedHelpers.add(className);
       }
-      const bang = optional ? '' : '!';
-      const q    = optional ? '?' : '';
-      lines.push(`  ${param.name}${q}${bang}: ${tsType};`);
-      lines.push('}');
-      lines.push('');
     }
 
     if (fieldClassNames.length === 1) {
@@ -244,6 +338,16 @@ export class TypeGenerator {
           return r ? this.mapType(r) : 'unknown';
         })
         .join(' | ');
+    }
+    if (schema.properties) {
+      const req = new Set(schema.required || []);
+      const fields = Object.entries(schema.properties).map(([key, val]) => {
+        const resolved = resolveSchema(val as SchemaObject | ReferenceObject, this.spec);
+        const tsType = resolved ? this.mapType(resolved) : 'unknown';
+        const opt = req.has(key) ? '' : '?';
+        return `${key}${opt}: ${tsType}`;
+      });
+      return `{ ${fields.join('; ')} }`;
     }
     switch (schema.type) {
       case 'string':  return 'string';
