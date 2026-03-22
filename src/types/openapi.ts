@@ -108,6 +108,6 @@ export interface SchemaConfig {
   docUrl: string;
   apiUrl: string;
   apiKey?: string;
-  output: string;
+  name: string;
   selectedTags?: string[];
 }

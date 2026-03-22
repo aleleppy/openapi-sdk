@@ -59,7 +59,7 @@ export class SDKGenerator {
         config,
         spec,
         tags,
-        outputDir: path.resolve(process.cwd(), config.output),
+        outputDir: path.resolve(process.cwd(), 'src/sdk', config.name),
       });
     }
 
@@ -71,6 +71,10 @@ export class SDKGenerator {
   async build(): Promise<void> {
     console.log("🦍 openapi-sdk generate — let's go!");
 
+    const sdkRoot = path.resolve(process.cwd(), 'src/sdk');
+    fs.mkdirSync(sdkRoot, { recursive: true });
+    await this.buildBaseService(sdkRoot);
+
     for (const entry of this.entries) {
       console.log('');
       console.log(`📡 Spec: ${entry.config.docUrl}`);
@@ -80,15 +84,16 @@ export class SDKGenerator {
       console.log('');
 
       fs.mkdirSync(entry.outputDir, { recursive: true });
-      await this.buildBaseService(entry);
 
       const tagResults = new Map<string, { hasTypes: boolean }>();
       for (const tag of entry.tags) {
         tagResults.set(tag.slug, await this.buildTag(tag, entry));
       }
 
-      await this.buildBarrelIndex(tagResults, entry);
+      await this.buildEntryIndex(tagResults, entry);
     }
+
+    await this.buildRootIndex(sdkRoot);
 
     console.log('');
     console.log('🎉 SDK generated successfully!');
@@ -118,7 +123,7 @@ export class SDKGenerator {
     return { hasTypes };
   }
 
-  private async buildBaseService(entry: SDKGenerator['entries'][number]): Promise<void> {
+  private async buildBaseService(sdkRoot: string): Promise<void> {
     const content = `// AUTO GENERATED — DO NOT EDIT
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import {
@@ -154,7 +159,7 @@ export abstract class ApiDefaultService {
   }
 
   private getUrl(url: string) {
-    const buildedUrl = \`\${this.baseUrl}/\${url}\`;
+    const buildedUrl = \`\${this.baseUrl}\${url}\`;
 
     return buildedUrl;
   }
@@ -258,13 +263,13 @@ export abstract class ApiDefaultService {
 }
 `;
 
-    const file = new Source({ path: path.join(entry.outputDir, 'api-default-service.ts') });
+    const file = new Source({ path: path.join(sdkRoot, 'api-default-service.ts') });
     file.changeData(content);
     await file.save();
     console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
   }
 
-  private async buildBarrelIndex(tagResults: Map<string, { hasTypes: boolean }>, entry: SDKGenerator['entries'][number]): Promise<void> {
+  private async buildEntryIndex(tagResults: Map<string, { hasTypes: boolean }>, entry: SDKGenerator['entries'][number]): Promise<void> {
     const lines = ['// AUTO GENERATED — DO NOT EDIT', ''];
 
     for (const tag of entry.tags) {
@@ -278,6 +283,21 @@ export abstract class ApiDefaultService {
     lines.push('');
 
     const file = new Source({ path: path.join(entry.outputDir, 'index.ts') });
+    file.changeData(lines.join('\n'));
+    await file.save();
+    console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
+  }
+
+  private async buildRootIndex(sdkRoot: string): Promise<void> {
+    const lines = ['// AUTO GENERATED — DO NOT EDIT', ''];
+
+    for (const entry of this.entries) {
+      lines.push(`export * from './${entry.config.name}';`);
+    }
+
+    lines.push('');
+
+    const file = new Source({ path: path.join(sdkRoot, 'index.ts') });
     file.changeData(lines.join('\n'));
     await file.save();
     console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);

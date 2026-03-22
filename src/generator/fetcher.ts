@@ -28,7 +28,7 @@ export class OpenAPIFetcher {
     for (const config of arr) {
       if (!config.docUrl) throw new Error('schema.json entry is missing the "docUrl" field.');
       if (!config.apiUrl) throw new Error('schema.json entry is missing the "apiUrl" field.');
-      if (!config.output) config.output = 'src/sdk';
+      if (!config.name)   throw new Error('schema.json entry is missing the "name" field.');
     }
 
     return arr;

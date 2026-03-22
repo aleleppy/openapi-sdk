@@ -22,9 +22,9 @@ export class ModuleGenerator {
     const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
     const hasAnyQuery = this.tag.operations.some((op) => op.queryParams.length > 0);
     if (hasAnyQuery) {
-      lines.push("import { ApiDefaultService, toQueryString } from '../api-default-service';");
+      lines.push("import { ApiDefaultService, toQueryString } from '../../api-default-service';");
     } else {
-      lines.push("import { ApiDefaultService } from '../api-default-service';");
+      lines.push("import { ApiDefaultService } from '../../api-default-service';");
     }
 
     const typeImports = this.collectTypeImports();

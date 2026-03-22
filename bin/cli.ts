@@ -23,13 +23,13 @@ program
   .option('-d, --doc-url <url>', 'OpenAPI spec URL')
   .option('-a, --api-url <url>', 'Base API URL')
   .option('-k, --api-key <key>', 'API key for authentication')
-  .option('-o, --output <dir>', 'Output directory for generated SDK', 'src/sdk')
+  .option('-n, --name <name>', 'SDK name (used as folder under src/sdk/)', 'my-api')
   .action((options) => {
     new SDKSetup({
       docUrl: options.docUrl,
       apiUrl: options.apiUrl,
       apiKey: options.apiKey,
-      output: options.output,
+      name:   options.name,
     }).run();
   });
 

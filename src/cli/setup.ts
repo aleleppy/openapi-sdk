@@ -6,14 +6,14 @@ export class SDKSetup {
   private readonly config:   SchemaConfig;
   private readonly filePath: string;
 
-  constructor(options: { docUrl?: string; apiUrl?: string; apiKey?: string; output?: string } = {}) {
+  constructor(options: { docUrl?: string; apiUrl?: string; apiKey?: string; name?: string } = {}) {
     this.filePath = path.join(process.cwd(), 'schema.json');
     this.config   = {
       $schema: './node_modules/@pinaculo/openapi-sdk/schemas/config.schema.json',
       docUrl:  options.docUrl || 'https://api.example.com/openapi.json',
       apiUrl:  options.apiUrl || 'https://api.example.com',
       apiKey:  options.apiKey || '',
-      output:  options.output || 'src/sdk',
+      name:    options.name  || 'my-api',
     } as any;
   }
 
