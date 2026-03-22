@@ -71,8 +71,14 @@ export class TypeGenerator {
 
     const enumBlocks: string[] = [];
     for (const [enumName, values] of this.emittedEnums) {
-      const members = values.map((v) => `  ${String(v)} = '${String(v)}',`).join("\n");
-      enumBlocks.push(`export enum ${enumName} {\n${members}\n}`);
+      const entries = values.map((v) => {
+        const key = typeof v === 'string' ? v : `Value${v}`;
+        const val = typeof v === 'string' ? `'${v}'` : String(v);
+        return `  ${key}: ${val}`;
+      }).join(',\n');
+      enumBlocks.push(
+        `export const ${enumName} = {\n${entries},\n} as const;\nexport type ${enumName} = (typeof ${enumName})[keyof typeof ${enumName}];`
+      );
     }
 
     const allContent = [...enumBlocks, ...blocks].join("\n");
