@@ -9,30 +9,32 @@ export class OpenAPIFetcher {
 
   constructor(dir: string = process.cwd()) {
     this.filePath = path.join(dir, 'schema.json');
-    this.configs  = this.readConfigs();
+    this.configs = this.readConfigs();
   }
 
   private readConfigs(): SchemaConfig[] {
     if (!fs.existsSync(this.filePath)) {
-      throw new Error(
-        `schema.json not found. Run "openapi-sdk setup" first.`,
-      );
+      throw new Error(`schema.json not found. Run "openapi-sdk setup" first.`);
     }
 
-    const raw    = fs.readFileSync(this.filePath, 'utf-8');
+    const raw = fs.readFileSync(this.filePath, 'utf-8');
     const parsed = JSON.parse(raw);
 
     // support legacy single-object format
     const arr: SchemaConfig[] = Array.isArray(parsed) ? parsed : [parsed];
 
     for (const config of arr) {
-      if (!config.docUrl) throw new Error('schema.json entry is missing the "docUrl" field.');
-      if (!config.apiUrl) throw new Error('schema.json entry is missing the "apiUrl" field.');
-      if (!config.name)   throw new Error('schema.json entry is missing the "name" field.');
+      if (!config.docUrl)
+        throw new Error('schema.json entry is missing the "docUrl" field.');
+      if (!config.apiUrl)
+        throw new Error('schema.json entry is missing the "apiUrl" field.');
+      if (!config.name)
+        throw new Error('schema.json entry is missing the "name" field.');
     }
 
     for (const config of arr) {
-      const envKey = config.name.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase() + '_KEY';
+      const envKey =
+        config.name.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase() + '_KEY';
       if (!config.apiKey) {
         config.apiKey = process.env[envKey];
       }
@@ -43,10 +45,17 @@ export class OpenAPIFetcher {
 
   saveConfigs(configs: SchemaConfig[]): void {
     const toSave = configs.map(({ apiKey, ...rest }) => rest);
-    fs.writeFileSync(this.filePath, JSON.stringify(toSave, null, 2) + '\n', 'utf-8');
+    fs.writeFileSync(
+      this.filePath,
+      JSON.stringify(toSave, null, 2) + '\n',
+      'utf-8',
+    );
   }
 
-  private validateSpec(spec: unknown, url: string): asserts spec is OpenAPISpec {
+  private validateSpec(
+    spec: unknown,
+    url: string,
+  ): asserts spec is OpenAPISpec {
     if (!spec || typeof spec !== 'object') {
       throw new Error(`Invalid spec from ${url}: expected an object`);
     }
@@ -65,7 +74,9 @@ export class OpenAPIFetcher {
       );
     }
     if (!s.paths || typeof s.paths !== 'object') {
-      throw new Error(`Invalid spec from ${url}: missing or invalid 'paths' field`);
+      throw new Error(
+        `Invalid spec from ${url}: missing or invalid 'paths' field`,
+      );
     }
     if (!s.info) {
       throw new Error(`Invalid spec from ${url}: missing 'info' field`);
@@ -87,7 +98,7 @@ export class OpenAPIFetcher {
 
     try {
       const response = await axios.get<OpenAPISpec>(config.docUrl, { headers });
-      const spec     = response.data;
+      const spec = response.data;
 
       this.validateSpec(spec, config.docUrl);
 
@@ -98,7 +109,9 @@ export class OpenAPIFetcher {
           `Failed to fetch OpenAPI spec (${config.docUrl}): ${err.response.status} ${err.response.statusText}`,
         );
       }
-      throw new Error(`Failed to fetch OpenAPI spec (${config.docUrl}): ${err.message}`);
+      throw new Error(
+        `Failed to fetch OpenAPI spec (${config.docUrl}): ${err.message}`,
+      );
     }
   }
 }

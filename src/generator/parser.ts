@@ -9,7 +9,15 @@ import type {
 } from '../types/openapi';
 import { capitalize, extractOperationName, buildNameFromPath } from './helpers';
 
-const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head'] as const;
+const HTTP_METHODS = [
+  'get',
+  'post',
+  'put',
+  'patch',
+  'delete',
+  'options',
+  'head',
+] as const;
 
 export class OpenAPIParser {
   readonly tags: ParsedTag[];
@@ -28,27 +36,39 @@ export class OpenAPIParser {
         const operation = pathItem[method] as OperationObject | undefined;
         if (!operation) continue;
 
-        const tag         = operation.tags?.[0] || 'default';
-        const operationId = operation.operationId || this.generateOperationId(method, pathStr);
-        const name        = extractOperationName(operationId, buildNameFromPath(method, pathStr));
+        const tag = operation.tags?.[0] || 'default';
+        const operationId =
+          operation.operationId || this.generateOperationId(method, pathStr);
+        const name = extractOperationName(
+          operationId,
+          buildNameFromPath(method, pathStr),
+        );
 
         const allParams: ParameterObject[] = [
           ...(pathItem.parameters || []),
           ...(operation.parameters || []),
         ] as ParameterObject[];
 
-        const pathParams   = allParams.filter((p) => p.in === 'path');
-        const queryParams  = allParams.filter((p) => p.in === 'query');
+        const pathParams = allParams.filter((p) => p.in === 'path');
+        const queryParams = allParams.filter((p) => p.in === 'query');
         const headerParams = allParams.filter((p) => p.in === 'header');
 
-        const requestBody  = this.resolveRequestBody(operation);
+        const requestBody = this.resolveRequestBody(operation);
         const responseSchema = this.resolveResponseSchema(operation);
 
         if (!tagMap.has(tag)) tagMap.set(tag, []);
         tagMap.get(tag)!.push({
-          method, path: pathStr, operationId, name, tag,
+          method,
+          path: pathStr,
+          operationId,
+          name,
+          tag,
           summary: operation.summary,
-          pathParams, queryParams, headerParams, requestBody, responseSchema,
+          pathParams,
+          queryParams,
+          headerParams,
+          requestBody,
+          responseSchema,
         });
       }
     }
@@ -89,7 +109,8 @@ export class OpenAPIParser {
     if (rb.$ref) return { $ref: rb.$ref } as ReferenceObject;
 
     if (rb.content) {
-      const jsonContent = rb.content['application/json'] || Object.values(rb.content)[0];
+      const jsonContent =
+        rb.content['application/json'] || Object.values(rb.content)[0];
       if ((jsonContent as any)?.schema) return (jsonContent as any).schema;
     }
 
@@ -112,7 +133,8 @@ export class OpenAPIParser {
     if (resp.$ref) return { $ref: resp.$ref } as ReferenceObject;
 
     if (resp.content) {
-      const jsonContent = resp.content['application/json'] || Object.values(resp.content)[0];
+      const jsonContent =
+        resp.content['application/json'] || Object.values(resp.content)[0];
       if ((jsonContent as any)?.schema) return (jsonContent as any).schema;
     }
 
@@ -139,7 +161,7 @@ export class OpenAPIParser {
 
     if (allSegments.every((s) => s.length === 0)) return 'unknown';
 
-    const first   = allSegments[0];
+    const first = allSegments[0];
     let commonLen = first.length;
 
     for (const segs of allSegments.slice(1)) {
@@ -148,7 +170,8 @@ export class OpenAPIParser {
       commonLen = i;
     }
 
-    const prefix = commonLen > 0 ? first.slice(0, commonLen) : [first[0]].filter(Boolean);
+    const prefix =
+      commonLen > 0 ? first.slice(0, commonLen) : [first[0]].filter(Boolean);
     if (prefix.length === 0) return 'default';
 
     return prefix.map(this.normalizeSegment).join('-');

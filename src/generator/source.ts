@@ -15,9 +15,15 @@ export class Source {
     let output = this.data;
     try {
       const options = await prettier.resolveConfig(process.cwd());
-      output = await prettier.format(this.data, { singleQuote: true, ...options, filepath: this.path });
+      output = await prettier.format(this.data, {
+        singleQuote: true,
+        ...options,
+        filepath: this.path,
+      });
     } catch (err: any) {
-      console.warn(`⚠️  Prettier failed for ${this.path}, saving unformatted: ${err.message}`);
+      console.warn(
+        `⚠️  Prettier failed for ${this.path}, saving unformatted: ${err.message}`,
+      );
     }
     await writeFile(this.path, output, 'utf-8');
   }

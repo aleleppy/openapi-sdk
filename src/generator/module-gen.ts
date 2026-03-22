@@ -7,27 +7,33 @@ import {
 } from './helpers';
 
 export class ModuleGenerator {
-  private readonly tag:    ParsedTag;
-  private readonly spec:   OpenAPISpec;
+  private readonly tag: ParsedTag;
+  private readonly spec: OpenAPISpec;
   private readonly apiUrl: string;
-  private readonly name:   string;
+  private readonly name: string;
 
   constructor(tag: ParsedTag, spec: OpenAPISpec, apiUrl: string, name: string) {
-    this.tag    = tag;
-    this.spec   = spec;
+    this.tag = tag;
+    this.spec = spec;
     this.apiUrl = apiUrl;
-    this.name   = name;
+    this.name = name;
   }
 
   // ─── public API ──────────────────────────────────────────────────────────────
 
   build(): string {
     const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
-    const hasAnyQuery = this.tag.operations.some((op) => op.queryParams.length > 0);
+    const hasAnyQuery = this.tag.operations.some(
+      (op) => op.queryParams.length > 0,
+    );
     if (hasAnyQuery) {
-      lines.push("import { ApiDefaultService, toQueryString } from '../../api-default-service';");
+      lines.push(
+        "import { ApiDefaultService, toQueryString } from '../../api-default-service';",
+      );
     } else {
-      lines.push("import { ApiDefaultService } from '../../api-default-service';");
+      lines.push(
+        "import { ApiDefaultService } from '../../api-default-service';",
+      );
     }
 
     const typeImports = this.collectTypeImports();
@@ -42,7 +48,9 @@ export class ModuleGenerator {
     const className = this.slugToClassName();
     const envKey = this.toEnvKey(this.name);
     lines.push(`export class ${className} extends ApiDefaultService {`);
-    lines.push(`  constructor(params?: { baseUrl?: string; apiKey?: string }) {`);
+    lines.push(
+      `  constructor(params?: { baseUrl?: string; apiKey?: string }) {`,
+    );
     lines.push(`    super({`);
     lines.push(`      baseUrl: params?.baseUrl ?? '${this.apiUrl}',`);
     lines.push(`      apiKey: params?.apiKey ?? process.env.${envKey},`);
@@ -76,9 +84,11 @@ export class ModuleGenerator {
   private collectTypeImports(): string[] {
     const imports: string[] = [];
     for (const op of this.tag.operations) {
-      if (op.requestBody)              imports.push(operationTypeName(op.name, 'InputDto'));
-      if (op.queryParams.length)       imports.push(operationTypeName(op.name, 'Query'));
-      if (op.responseSchema)           imports.push(operationTypeName(op.name, 'Response'));
+      if (op.requestBody) imports.push(operationTypeName(op.name, 'InputDto'));
+      if (op.queryParams.length)
+        imports.push(operationTypeName(op.name, 'Query'));
+      if (op.responseSchema)
+        imports.push(operationTypeName(op.name, 'Response'));
       for (const p of op.pathParams) {
         const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
         if (schema?.enum) imports.push(toPascalCase(p.name) + 'Enum');
@@ -88,20 +98,23 @@ export class ModuleGenerator {
   }
 
   private generateMethodLines(op: ParsedOperation): string[] {
-    const fnName     = op.name;
-    const argStr     = this.buildArgument(op);
-    const retType    = this.buildReturnType(op);
+    const fnName = op.name;
+    const argStr = this.buildArgument(op);
+    const retType = this.buildReturnType(op);
 
-    const hasPath    = op.pathParams.length > 0;
-    const hasBody    = !!op.requestBody;
-    const hasQuery   = op.queryParams.length > 0;
+    const hasPath = op.pathParams.length > 0;
+    const hasBody = !!op.requestBody;
+    const hasQuery = op.queryParams.length > 0;
     const hasHeaders = (op.headerParams?.length ?? 0) > 0;
-    const m          = op.method;
+    const m = op.method;
 
     // Build URL expression
     let urlExpr: string;
     if (hasPath) {
-      urlExpr = '`' + op.path.replace(/\{([^}]+)\}/g, (_, p) => '${params.' + p + '}') + '`';
+      urlExpr =
+        '`' +
+        op.path.replace(/\{([^}]+)\}/g, (_, p) => '${params.' + p + '}') +
+        '`';
     } else {
       urlExpr = `'${op.path}'`;
     }
@@ -117,7 +130,7 @@ export class ModuleGenerator {
     }
 
     const callParts = [`url: ${urlExpr}`];
-    if (hasBody)    callParts.push('body');
+    if (hasBody) callParts.push('body');
     if (hasHeaders) callParts.push('headers');
     lines.push(`  return this.${m}({ ${callParts.join(', ')} });`);
 
@@ -126,8 +139,8 @@ export class ModuleGenerator {
   }
 
   private buildArgument(op: ParsedOperation): string {
-    const hasPath  = op.pathParams.length > 0;
-    const hasBody  = !!op.requestBody;
+    const hasPath = op.pathParams.length > 0;
+    const hasBody = !!op.requestBody;
     const hasQuery = op.queryParams.length > 0;
     if (!hasPath && !hasBody && !hasQuery) return '';
 
@@ -139,16 +152,36 @@ export class ModuleGenerator {
         const type = schema?.enum ? toPascalCase(p.name) + 'Enum' : 'string';
         return `${p.name}: ${type}`;
       });
-      args.push({ name: 'params', type: `{ ${paramFields.join('; ')} }`, optional: false });
+      args.push({
+        name: 'params',
+        type: `{ ${paramFields.join('; ')} }`,
+        optional: false,
+      });
     }
-    if (hasBody)  args.push({ name: 'body', type: operationTypeName(op.name, 'InputDto'), optional: false });
-    if (hasQuery) args.push({ name: 'query', type: operationTypeName(op.name, 'Query'), optional: true });
+    if (hasBody)
+      args.push({
+        name: 'body',
+        type: operationTypeName(op.name, 'InputDto'),
+        optional: false,
+      });
+    if (hasQuery)
+      args.push({
+        name: 'query',
+        type: operationTypeName(op.name, 'Query'),
+        optional: true,
+      });
     if ((op.headerParams?.length ?? 0) > 0) {
-      const headerFields = op.headerParams.map((p) => {
-        const q = p.required ? '' : '?';
-        return `'${p.name}'${q}: string`;
-      }).join('; ');
-      args.push({ name: 'headers', type: `{ ${headerFields} }`, optional: true });
+      const headerFields = op.headerParams
+        .map((p) => {
+          const q = p.required ? '' : '?';
+          return `'${p.name}'${q}: string`;
+        })
+        .join('; ');
+      args.push({
+        name: 'headers',
+        type: `{ ${headerFields} }`,
+        optional: true,
+      });
     }
 
     if (args.length === 1) {
@@ -164,16 +197,16 @@ export class ModuleGenerator {
   private buildReturnType(op: ParsedOperation): string {
     if (!op.responseSchema) return 'Promise<void>';
     const typeName = operationTypeName(op.name, 'Response');
-    const raw      = resolveSchema(op.responseSchema, this.spec);
+    const raw = resolveSchema(op.responseSchema, this.spec);
     if (!raw) return `Promise<${typeName}>`;
-    const inner  = extractDataSchema(raw, this.spec);
+    const inner = extractDataSchema(raw, this.spec);
     const schema = inner ?? raw;
-    return schema?.type === 'array' ? `Promise<${typeName}[]>` : `Promise<${typeName}>`;
+    return schema?.type === 'array'
+      ? `Promise<${typeName}[]>`
+      : `Promise<${typeName}>`;
   }
 
   private toEnvKey(name: string): string {
     return name.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase() + '_KEY';
   }
-
-
 }
