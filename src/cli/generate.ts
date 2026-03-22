@@ -114,7 +114,7 @@ export class SDKGenerator {
     }
 
     const moduleFile = new Source({ path: path.join(tagDir, `${tag.slug}.module.ts`) });
-    moduleFile.changeData(new ModuleGenerator(tag, entry.spec, entry.config.apiUrl).build());
+    moduleFile.changeData(new ModuleGenerator(tag, entry.spec, entry.config.apiUrl, entry.config.name).build());
     await moduleFile.save();
     console.log(`  📝 ${path.relative(process.cwd(), moduleFile.path)}`);
 

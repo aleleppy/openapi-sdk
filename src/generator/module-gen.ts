@@ -10,11 +10,13 @@ export class ModuleGenerator {
   private readonly tag:    ParsedTag;
   private readonly spec:   OpenAPISpec;
   private readonly apiUrl: string;
+  private readonly name:   string;
 
-  constructor(tag: ParsedTag, spec: OpenAPISpec, apiUrl: string) {
+  constructor(tag: ParsedTag, spec: OpenAPISpec, apiUrl: string, name: string) {
     this.tag    = tag;
     this.spec   = spec;
     this.apiUrl = apiUrl;
+    this.name   = name;
   }
 
   // ─── public API ──────────────────────────────────────────────────────────────
@@ -38,9 +40,13 @@ export class ModuleGenerator {
     lines.push('');
 
     const className = this.slugToClassName();
+    const envKey = this.toEnvKey(this.name);
     lines.push(`export class ${className} extends ApiDefaultService {`);
-    lines.push(`  constructor(params?: { apiKey: string }) {`);
-    lines.push(`    super({ baseUrl: '${this.apiUrl}', apiKey: params?.apiKey });`);
+    lines.push(`  constructor(params?: { baseUrl?: string; apiKey?: string }) {`);
+    lines.push(`    super({`);
+    lines.push(`      baseUrl: params?.baseUrl ?? '${this.apiUrl}',`);
+    lines.push(`      apiKey: params?.apiKey ?? process.env.${envKey},`);
+    lines.push(`    });`);
     lines.push(`  }`);
     lines.push('');
 
@@ -154,6 +160,10 @@ export class ModuleGenerator {
     const inner  = extractDataSchema(raw, this.spec);
     const schema = inner ?? raw;
     return schema?.type === 'array' ? `Promise<${typeName}[]>` : `Promise<${typeName}>`;
+  }
+
+  private toEnvKey(name: string): string {
+    return name.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase() + '_KEY';
   }
 
 
