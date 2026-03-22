@@ -35,7 +35,7 @@ program
   .action(async () => {
     try {
       const generator = await SDKGenerator.create();
-      generator.build();
+      await generator.build();
     } catch (err: any) {
       console.error(`❌ Error: ${err.message}`);
       process.exit(1);

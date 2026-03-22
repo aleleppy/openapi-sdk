@@ -4,6 +4,7 @@ import { OpenAPIFetcher } from '../generator/fetcher';
 import { OpenAPIParser } from '../generator/parser';
 import { TypeGenerator } from '../generator/type-gen';
 import { ModuleGenerator } from '../generator/module-gen';
+import { Source } from '../generator/source';
 import type { OpenAPISpec, SchemaConfig, ParsedTag } from '../types/openapi';
 
 export class SDKGenerator {
@@ -27,7 +28,7 @@ export class SDKGenerator {
 
   // ─── public API ──────────────────────────────────────────────────────────────
 
-  build(): void {
+  async build(): Promise<void> {
     console.log("🦍 openapi-sdk generate — let's go!");
     console.log('');
     console.log(`📡 Spec: ${this.config.url}`);
@@ -37,13 +38,13 @@ export class SDKGenerator {
     console.log('');
 
     fs.mkdirSync(this.outputDir, { recursive: true });
-    this.buildBaseService();
+    await this.buildBaseService();
 
     for (const tag of this.tags) {
-      this.buildTag(tag);
+      await this.buildTag(tag);
     }
 
-    this.buildBarrelIndex();
+    await this.buildBarrelIndex();
 
     console.log('');
     console.log('🎉 SDK generated successfully!');
@@ -51,22 +52,22 @@ export class SDKGenerator {
 
   // ─── private builders ────────────────────────────────────────────────────────
 
-  private buildTag(tag: ParsedTag): void {
+  private async buildTag(tag: ParsedTag): Promise<void> {
     const tagDir = path.join(this.outputDir, tag.slug);
     fs.mkdirSync(tagDir, { recursive: true });
 
-    const typesContent = new TypeGenerator(tag, this.spec).build();
-    const typesFile    = path.join(tagDir, `${tag.slug}.types.ts`);
-    fs.writeFileSync(typesFile, typesContent, 'utf-8');
-    console.log(`  📝 ${path.relative(process.cwd(), typesFile)}`);
+    const typesFile = new Source({ path: path.join(tagDir, `${tag.slug}.types.ts`) });
+    typesFile.changeData(new TypeGenerator(tag, this.spec).build());
+    await typesFile.save();
+    console.log(`  📝 ${path.relative(process.cwd(), typesFile.path)}`);
 
-    const moduleContent = new ModuleGenerator(tag, this.spec).build();
-    const moduleFile    = path.join(tagDir, `${tag.slug}.module.ts`);
-    fs.writeFileSync(moduleFile, moduleContent, 'utf-8');
-    console.log(`  📝 ${path.relative(process.cwd(), moduleFile)}`);
+    const moduleFile = new Source({ path: path.join(tagDir, `${tag.slug}.module.ts`) });
+    moduleFile.changeData(new ModuleGenerator(tag, this.spec).build());
+    await moduleFile.save();
+    console.log(`  📝 ${path.relative(process.cwd(), moduleFile.path)}`);
   }
 
-  private buildBaseService(): void {
+  private async buildBaseService(): Promise<void> {
     const content = `// AUTO GENERATED — DO NOT EDIT
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import {
@@ -188,12 +189,13 @@ export abstract class ApiDefaultService {
 }
 `;
 
-    const filePath = path.join(this.outputDir, 'api-default-service.ts');
-    fs.writeFileSync(filePath, content, 'utf-8');
-    console.log(`  📝 ${path.relative(process.cwd(), filePath)}`);
+    const file = new Source({ path: path.join(this.outputDir, 'api-default-service.ts') });
+    file.changeData(content);
+    await file.save();
+    console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
   }
 
-  private buildBarrelIndex(): void {
+  private async buildBarrelIndex(): Promise<void> {
     const lines = ['// AUTO GENERATED — DO NOT EDIT', ''];
 
     for (const tag of this.tags) {
@@ -203,8 +205,9 @@ export abstract class ApiDefaultService {
 
     lines.push('');
 
-    const indexFile = path.join(this.outputDir, 'index.ts');
-    fs.writeFileSync(indexFile, lines.join('\n'), 'utf-8');
-    console.log(`  📝 ${path.relative(process.cwd(), indexFile)}`);
+    const file = new Source({ path: path.join(this.outputDir, 'index.ts') });
+    file.changeData(lines.join('\n'));
+    await file.save();
+    console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
   }
 }

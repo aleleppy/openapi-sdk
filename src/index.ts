@@ -5,6 +5,7 @@ export { OpenAPIFetcher }  from './generator/fetcher';
 export { OpenAPIParser }   from './generator/parser';
 export { TypeGenerator }   from './generator/type-gen';
 export { ModuleGenerator } from './generator/module-gen';
+export { Source }          from './generator/source';
 export { SDKGenerator }    from './cli/generate';
 export { SDKSetup }        from './cli/setup';
 export type * from './types/openapi';
