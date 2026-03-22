@@ -46,6 +46,32 @@ export class OpenAPIFetcher {
     fs.writeFileSync(this.filePath, JSON.stringify(toSave, null, 2) + '\n', 'utf-8');
   }
 
+  private validateSpec(spec: unknown, url: string): asserts spec is OpenAPISpec {
+    if (!spec || typeof spec !== 'object') {
+      throw new Error(`Invalid spec from ${url}: expected an object`);
+    }
+    const s = spec as any;
+    if (!s.openapi) {
+      if (s.swagger) {
+        throw new Error(
+          `Swagger 2.x is not supported (received swagger: '${s.swagger}'). Only OpenAPI 3.x is supported.`,
+        );
+      }
+      throw new Error(`Invalid spec from ${url}: missing 'openapi' field`);
+    }
+    if (!s.openapi.startsWith('3.')) {
+      throw new Error(
+        `Only OpenAPI 3.x is supported. Received: openapi '${s.openapi}' from ${url}`,
+      );
+    }
+    if (!s.paths || typeof s.paths !== 'object') {
+      throw new Error(`Invalid spec from ${url}: missing or invalid 'paths' field`);
+    }
+    if (!s.info) {
+      throw new Error(`Invalid spec from ${url}: missing 'info' field`);
+    }
+  }
+
   async fetch(config: SchemaConfig): Promise<OpenAPISpec> {
     if (config.apiKey && !config.docUrl.startsWith('https://')) {
       throw new Error(
@@ -63,9 +89,7 @@ export class OpenAPIFetcher {
       const response = await axios.get<OpenAPISpec>(config.docUrl, { headers });
       const spec     = response.data;
 
-      if (!spec.openapi || !spec.paths) {
-        throw new Error('The response does not look like a valid OpenAPI 3.x spec.');
-      }
+      this.validateSpec(spec, config.docUrl);
 
       return spec;
     } catch (err: any) {
