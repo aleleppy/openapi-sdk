@@ -24,12 +24,6 @@ function toPascalCase(str: string): string {
     .join('');
 }
 
-/**
- * Build a unique, readable name from HTTP method + URL path.
- *
- * POST /restricted/files/presigned-url   -> PostRestrictedFilesPresignedUrl
- * GET  /restricted/files/{fileId}        -> GetRestrictedFilesByFileId
- */
 export function buildNameFromPath(method: string, path: string): string {
   const segments = path.split('/').filter(Boolean);
   const parts = segments.map((seg) => {
@@ -47,80 +41,226 @@ function buildTypeName(method: string, path: string, suffix: string): string {
 
 // ─── wrapper detection ───────────────────────────────────────────────────────
 
-/**
- * Detects NestJS-style response wrappers:
- *   { statusCode, message, data: T }
- * Returns the inner data schema when detected, otherwise null.
- */
 export function extractDataSchema(
   schema: SchemaObject,
   spec: OpenAPISpec,
 ): SchemaObject | null {
   const props = schema.properties || {};
-  const hasWrapper =
-    (props.statusCode || props.status) &&
-    props.data;
-
-  if (!hasWrapper) return null;
-
-  const dataSchemaOrRef = props.data as SchemaObject | ReferenceObject;
-  return resolveSchema(dataSchemaOrRef, spec);
+  if ((props.statusCode || props.status) && props.data) {
+    return resolveSchema(props.data as SchemaObject | ReferenceObject, spec);
+  }
+  return null;
 }
 
 // ─── main export ─────────────────────────────────────────────────────────────
 
 export function generateTypes(tag: ParsedTag, spec: OpenAPISpec): string {
-  const lines: string[] = ['// AUTO GENERATED \u2014 DO NOT EDIT', ''];
-  const generatedInterfaces = new Set<string>();
+  const blocks: string[]   = [];
+  const generated          = new Set<string>();
 
   for (const op of tag.operations) {
-    // Request body type
     if (op.requestBody) {
-      const typeName = buildTypeName(op.method, op.path, 'Input');
-      if (!generatedInterfaces.has(typeName)) {
+      const name = buildTypeName(op.method, op.path, 'Input');
+      if (!generated.has(name)) {
         const schema = resolveSchema(op.requestBody, spec);
         if (schema) {
-          lines.push(generateInterface(typeName, schema, spec));
-          lines.push('');
-          generatedInterfaces.add(typeName);
+          blocks.push(generateClassBlock(name, schema, spec, 'input'));
+          generated.add(name);
         }
       }
     }
 
-    // Query params type
     if (op.queryParams.length > 0) {
-      const typeName = buildTypeName(op.method, op.path, 'Query');
-      if (!generatedInterfaces.has(typeName)) {
-        lines.push(generateParamsInterface(typeName, op.queryParams, spec));
-        lines.push('');
-        generatedInterfaces.add(typeName);
+      const name = buildTypeName(op.method, op.path, 'Query');
+      if (!generated.has(name)) {
+        blocks.push(generateQueryClass(name, op.queryParams, spec));
+        generated.add(name);
       }
     }
 
-    // Response type — unwrap NestJS wrapper if detected
     if (op.responseSchema) {
-      const typeName = buildTypeName(op.method, op.path, 'Response');
-      if (!generatedInterfaces.has(typeName)) {
+      const name = buildTypeName(op.method, op.path, 'Response');
+      if (!generated.has(name)) {
         const raw = resolveSchema(op.responseSchema, spec);
         if (raw) {
-          // Try to unwrap { statusCode, message, data: T }
-          const inner = extractDataSchema(raw, spec);
+          const inner  = extractDataSchema(raw, spec);
           const schema = inner ?? raw;
-
-          if (schema.type === 'array' && schema.items) {
-            const itemSchema = resolveSchema(schema.items, spec);
-            if (itemSchema) {
-              lines.push(generateInterface(typeName, itemSchema, spec));
-              lines.push('');
-            }
-          } else {
-            lines.push(generateInterface(typeName, schema, spec));
-            lines.push('');
-          }
-          generatedInterfaces.add(typeName);
+          const unwrapped = schema.type === 'array' && schema.items
+            ? resolveSchema(schema.items, spec) ?? schema
+            : schema;
+          blocks.push(generateClassBlock(name, unwrapped, spec, 'response'));
+          generated.add(name);
         }
       }
     }
+  }
+
+  if (blocks.length === 0) return '// AUTO GENERATED \u2014 DO NOT EDIT\n';
+
+  const lines: string[] = [
+    '// AUTO GENERATED \u2014 DO NOT EDIT',
+    "import { ApiProperty, IntersectionType } from '@nestjs/swagger';",
+    "import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, IsEnum } from 'class-validator';",
+    '',
+    ...blocks.flatMap((b) => [b, '']),
+  ];
+
+  return lines.join('\n');
+}
+
+// ─── class generation ─────────────────────────────────────────────────────────
+
+type Mode = 'input' | 'response';
+
+function generateClassBlock(
+  name: string,
+  schema: SchemaObject,
+  spec: OpenAPISpec,
+  mode: Mode,
+): string {
+  if (!schema.properties) {
+    // No properties — simple type alias
+    return `export type ${name} = ${mapType(schema, spec)};`;
+  }
+
+  const required  = new Set(schema.required || []);
+  const fieldNames = Object.keys(schema.properties);
+
+  if (fieldNames.length === 0) {
+    return `export type ${name} = Record<string, unknown>;`;
+  }
+
+  const lines: string[] = [];
+
+  // One class per field
+  const fieldClassNames: string[] = [];
+  for (const fieldName of fieldNames) {
+    const fieldSchemaOrRef = schema.properties![fieldName];
+    const fieldSchema      = resolveSchema(fieldSchemaOrRef, spec);
+    if (!fieldSchema) continue;
+
+    const isReq       = required.has(fieldName);
+    const className   = toPascalCase(fieldName) + (mode === 'input' ? 'Dto' : 'Res');
+    fieldClassNames.push(className);
+
+    lines.push(...generateFieldClass(className, fieldName, fieldSchema, isReq, spec, mode));
+    lines.push('');
+  }
+
+  // Main class
+  if (fieldClassNames.length === 1) {
+    lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
+  } else {
+    lines.push(
+      `export class ${name} extends IntersectionType(`,
+      ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
+      `  ${fieldClassNames[fieldClassNames.length - 1]},`,
+      `) {}`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
+function generateFieldClass(
+  className: string,
+  fieldName: string,
+  schema: SchemaObject,
+  required: boolean,
+  spec: OpenAPISpec,
+  mode: Mode,
+): string[] {
+  const tsType     = mapType(schema, spec);
+  const apiType    = mapApiPropertyType(schema, spec);
+  const example    = schema.example !== undefined ? schema.example : defaultExample(schema);
+  const exampleStr = JSON.stringify(example);
+  const optional   = !required;
+
+  const lines: string[] = [`class ${className} {`];
+
+  // @ApiProperty
+  if (schema.enum) {
+    const enumRef = toPascalCase(fieldName) + 'Enum';
+    lines.push(`  @ApiProperty({ enum: ${enumRef}, enumName: '${enumRef}', example: ${exampleStr}, required: ${!optional} })`);
+  } else {
+    lines.push(`  @ApiProperty({ type: ${apiType}, example: ${exampleStr}, required: ${!optional} })`);
+  }
+
+  // Validators (Input only)
+  if (mode === 'input') {
+    if (optional) lines.push('  @IsOptional()');
+    if (schema.enum) {
+      const enumRef = toPascalCase(fieldName) + 'Enum';
+      lines.push(`  @IsEnum(${enumRef})`);
+    } else {
+      switch (schema.type) {
+        case 'string':
+          lines.push('  @IsString()');
+          if (!optional) lines.push('  @IsNotEmpty()');
+          break;
+        case 'integer':
+        case 'number':
+          lines.push('  @IsNumber()');
+          break;
+        case 'boolean':
+          lines.push('  @IsBoolean()');
+          break;
+      }
+    }
+  }
+
+  const bang     = optional ? '' : '!';
+  const question = optional ? '?' : '';
+  lines.push(`  ${fieldName}${question}${bang}: ${tsType};`);
+  lines.push('}');
+
+  return lines;
+}
+
+function generateQueryClass(
+  name: string,
+  params: ParameterObject[],
+  spec: OpenAPISpec,
+): string {
+  if (params.length === 0) return `export type ${name} = Record<string, unknown>;`;
+
+  const lines: string[] = [];
+  const fieldClassNames: string[] = [];
+
+  for (const param of params) {
+    const schema    = param.schema ? resolveSchema(param.schema, spec) : null;
+    const className = toPascalCase(param.name) + 'QueryDto';
+    fieldClassNames.push(className);
+    const isReq     = !!param.required;
+    const tsType    = schema ? mapType(schema, spec) : 'string';
+    const apiType   = schema ? mapApiPropertyType(schema, spec) : "'string'";
+    const example   = schema?.example !== undefined ? schema.example : defaultExample(schema ?? { type: 'string' });
+    const optional  = !isReq;
+
+    lines.push(`class ${className} {`);
+    lines.push(`  @ApiProperty({ type: ${apiType}, example: ${JSON.stringify(example)}, required: ${isReq} })`);
+    if (optional) lines.push('  @IsOptional()');
+    if (schema?.type === 'number' || schema?.type === 'integer') {
+      lines.push('  @IsNumber()');
+    } else {
+      lines.push('  @IsString()');
+    }
+    const bang = optional ? '' : '!';
+    const q    = optional ? '?' : '';
+    lines.push(`  ${param.name}${q}${bang}: ${tsType};`);
+    lines.push('}');
+    lines.push('');
+  }
+
+  if (fieldClassNames.length === 1) {
+    lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
+  } else {
+    lines.push(
+      `export class ${name} extends IntersectionType(`,
+      ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
+      `  ${fieldClassNames[fieldClassNames.length - 1]},`,
+      `) {}`,
+    );
   }
 
   return lines.join('\n');
@@ -132,18 +272,14 @@ export function resolveSchema(
   schemaOrRef: SchemaObject | ReferenceObject,
   spec: OpenAPISpec,
 ): SchemaObject | null {
-  if (isReferenceObject(schemaOrRef)) {
-    return resolveRef(schemaOrRef.$ref, spec);
-  }
+  if (isReferenceObject(schemaOrRef)) return resolveRef(schemaOrRef.$ref, spec);
 
   if (schemaOrRef.allOf) {
     const merged: SchemaObject = { type: 'object', properties: {}, required: [] };
     for (const item of schemaOrRef.allOf) {
-      const resolved = resolveSchema(item, spec);
-      if (resolved?.properties)
-        merged.properties = { ...merged.properties, ...resolved.properties };
-      if (resolved?.required)
-        merged.required = [...(merged.required || []), ...resolved.required];
+      const r = resolveSchema(item, spec);
+      if (r?.properties) merged.properties = { ...merged.properties, ...r.properties };
+      if (r?.required)   merged.required   = [...(merged.required || []), ...r.required];
     }
     return merged;
   }
@@ -154,75 +290,15 @@ export function resolveSchema(
 function resolveRef(ref: string, spec: OpenAPISpec): SchemaObject | null {
   const parts = ref.replace('#/', '').split('/');
   let current: any = spec;
-  for (const part of parts) {
-    current = current?.[part];
+  for (const p of parts) {
+    current = current?.[p];
     if (!current) return null;
   }
   if (current.$ref) return resolveRef(current.$ref, spec);
   return current as SchemaObject;
 }
 
-// ─── interface generation ─────────────────────────────────────────────────────
-
-function generateInterface(
-  name: string,
-  schema: SchemaObject,
-  spec: OpenAPISpec,
-): string {
-  if (!schema.properties && !schema.type) {
-    return `export type ${name} = Record<string, unknown>;`;
-  }
-  if (schema.type && schema.type !== 'object') {
-    return `export type ${name} = ${mapType(schema, spec)};`;
-  }
-
-  const lines: string[] = [`export interface ${name} {`];
-  const required = new Set(schema.required || []);
-
-  if (schema.properties) {
-    for (const [propName, propSchemaOrRef] of Object.entries(schema.properties)) {
-      const propSchema = resolveSchema(propSchemaOrRef, spec);
-      const isReq      = required.has(propName);
-      const tsType     = propSchema ? mapType(propSchema, spec) : 'unknown';
-      const optional   = isReq ? '' : '?';
-      const safeName   = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)
-        ? propName
-        : `'${propName}'`;
-
-      // JSDoc with description and example
-      const desc    = propSchema?.description;
-      const example = propSchema?.example;
-      if (desc || example !== undefined) {
-        lines.push('  /**');
-        if (desc)             lines.push(`   * ${desc}`);
-        if (example !== undefined) lines.push(`   * @example ${JSON.stringify(example)}`);
-        lines.push('   */');
-      }
-
-      lines.push(`  ${safeName}${optional}: ${tsType};`);
-    }
-  }
-
-  lines.push('}');
-  return lines.join('\n');
-}
-
-function generateParamsInterface(
-  name: string,
-  params: ParameterObject[],
-  spec: OpenAPISpec,
-): string {
-  const lines: string[] = [`export interface ${name} {`];
-  for (const param of params) {
-    const schema  = param.schema ? resolveSchema(param.schema, spec) : null;
-    const tsType  = schema ? mapType(schema, spec) : 'string';
-    const optional = param.required ? '' : '?';
-    if (param.description) lines.push(`  /** ${param.description} */`);
-    lines.push(`  ${param.name}${optional}: ${tsType};`);
-  }
-  lines.push('}');
-  return lines.join('\n');
-}
+// ─── type mapping ─────────────────────────────────────────────────────────────
 
 function mapType(schema: SchemaObject, spec: OpenAPISpec): string {
   if (schema.enum) {
@@ -253,5 +329,29 @@ function mapType(schema: SchemaObject, spec: OpenAPISpec): string {
       return 'Record<string, unknown>';
     }
     default: return 'unknown';
+  }
+}
+
+function mapApiPropertyType(schema: SchemaObject, spec: OpenAPISpec): string {
+  if (schema.enum) return "'string'";
+  switch (schema.type) {
+    case 'string':  return "'string'";
+    case 'integer':
+    case 'number':  return "'number'";
+    case 'boolean': return "'boolean'";
+    case 'array':   return "'array'";
+    case 'object':  return "'object'";
+    default:        return "'string'";
+  }
+}
+
+function defaultExample(schema: SchemaObject): unknown {
+  if (schema.enum) return schema.enum[0] ?? 'VALUE';
+  switch (schema.type) {
+    case 'string':  return 'example';
+    case 'integer':
+    case 'number':  return 0;
+    case 'boolean': return true;
+    default:        return null;
   }
 }
