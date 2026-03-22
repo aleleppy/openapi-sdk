@@ -4,39 +4,49 @@ import * as path from 'path';
 import type { OpenAPISpec, SchemaConfig } from '../types/openapi';
 
 export class OpenAPIFetcher {
-  readonly config: SchemaConfig;
+  readonly configs: SchemaConfig[];
+  private readonly filePath: string;
 
   constructor(dir: string = process.cwd()) {
-    this.config = this.readConfig(dir);
+    this.filePath = path.join(dir, 'schema.json');
+    this.configs  = this.readConfigs();
   }
 
-  private readConfig(dir: string): SchemaConfig {
-    const filePath = path.join(dir, 'schema.json');
-
-    if (!fs.existsSync(filePath)) {
+  private readConfigs(): SchemaConfig[] {
+    if (!fs.existsSync(this.filePath)) {
       throw new Error(
-        `schema.json not found in ${dir}. Run "openapi-sdk setup" first.`,
+        `schema.json not found. Run "openapi-sdk setup" first.`,
       );
     }
 
-    const raw    = fs.readFileSync(filePath, 'utf-8');
-    const config = JSON.parse(raw) as SchemaConfig;
+    const raw    = fs.readFileSync(this.filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
 
-    if (!config.url) throw new Error('schema.json is missing the "url" field.');
-    if (!config.output) config.output = 'src/sdk';
+    // support legacy single-object format
+    const arr: SchemaConfig[] = Array.isArray(parsed) ? parsed : [parsed];
 
-    return config;
+    for (const config of arr) {
+      if (!config.docUrl) throw new Error('schema.json entry is missing the "docUrl" field.');
+      if (!config.apiUrl) throw new Error('schema.json entry is missing the "apiUrl" field.');
+      if (!config.output) config.output = 'src/sdk';
+    }
+
+    return arr;
   }
 
-  async fetch(): Promise<OpenAPISpec> {
+  saveConfigs(configs: SchemaConfig[]): void {
+    fs.writeFileSync(this.filePath, JSON.stringify(configs, null, 2) + '\n', 'utf-8');
+  }
+
+  async fetch(config: SchemaConfig): Promise<OpenAPISpec> {
     const headers: Record<string, string> = { Accept: 'application/json' };
 
-    if (this.config.apiKey) {
-      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+    if (config.apiKey) {
+      headers['Authorization'] = `Bearer ${config.apiKey}`;
     }
 
     try {
-      const response = await axios.get<OpenAPISpec>(this.config.url, { headers });
+      const response = await axios.get<OpenAPISpec>(config.docUrl, { headers });
       const spec     = response.data;
 
       if (!spec.openapi || !spec.paths) {
@@ -47,10 +57,10 @@ export class OpenAPIFetcher {
     } catch (err: any) {
       if (err.response) {
         throw new Error(
-          `Failed to fetch OpenAPI spec: ${err.response.status} ${err.response.statusText}`,
+          `Failed to fetch OpenAPI spec (${config.docUrl}): ${err.response.status} ${err.response.statusText}`,
         );
       }
-      throw new Error(`Failed to fetch OpenAPI spec: ${err.message}`);
+      throw new Error(`Failed to fetch OpenAPI spec (${config.docUrl}): ${err.message}`);
     }
   }
 }

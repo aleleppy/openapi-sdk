@@ -14,69 +14,81 @@ export interface GenerateOptions {
 }
 
 export class SDKGenerator {
-  readonly config:    SchemaConfig;
-  readonly spec:      OpenAPISpec;
-  readonly tags:      ParsedTag[];
-  readonly outputDir: string;
+  private readonly entries: Array<{
+    config: SchemaConfig;
+    spec: OpenAPISpec;
+    tags: ParsedTag[];
+    outputDir: string;
+  }>;
 
-  private constructor(config: SchemaConfig, spec: OpenAPISpec) {
-    this.config    = config;
-    this.spec      = spec;
-    const allTags  = new OpenAPIParser(spec).tags;
-
-    if (config.selectedTags) {
-      this.tags = allTags.filter((t) => config.selectedTags!.includes(t.name));
-      const missing = config.selectedTags.filter((name) => !allTags.some((t) => t.name === name));
-      if (missing.length > 0) {
-        console.warn(`⚠️  Tags not found in spec: ${missing.join(', ')}`);
-      }
-    } else {
-      this.tags = allTags;
-    }
-
-    this.outputDir = path.resolve(process.cwd(), config.output);
+  private constructor(entries: SDKGenerator['entries']) {
+    this.entries = entries;
   }
 
   static async create(dir?: string, options: GenerateOptions = {}): Promise<SDKGenerator> {
-    const fetcher = new OpenAPIFetcher(dir);
-    const spec    = await fetcher.fetch();
-    let config    = fetcher.config;
+    const fetcher  = new OpenAPIFetcher(dir);
+    const selector = new ModuleSelector(dir);
+    const entries: SDKGenerator['entries'] = [];
 
-    if (options.generateAll) {
-      return new SDKGenerator({ ...config, selectedTags: undefined }, spec);
+    for (let config of fetcher.configs) {
+      const spec    = await fetcher.fetch(config);
+      const allTags = new OpenAPIParser(spec).tags;
+
+      if (options.generateAll) {
+        config = { ...config, selectedTags: undefined };
+      } else {
+        const needsSelection = options.forceSelect || config.selectedTags === undefined;
+        if (needsSelection) {
+          const selected = await selector.select(spec, config);
+          config = { ...config, selectedTags: selected };
+        }
+      }
+
+      let tags: ParsedTag[];
+      if (config.selectedTags) {
+        tags = allTags.filter((t) => config.selectedTags!.includes(t.name));
+        const missing = config.selectedTags.filter((name) => !allTags.some((t) => t.name === name));
+        if (missing.length > 0) {
+          console.warn(`⚠️  Tags not found in spec (${config.apiUrl}): ${missing.join(', ')}`);
+        }
+      } else {
+        tags = allTags;
+      }
+
+      entries.push({
+        config,
+        spec,
+        tags,
+        outputDir: path.resolve(process.cwd(), config.output),
+      });
     }
 
-    const needsSelection = options.forceSelect || config.selectedTags === undefined;
-
-    if (needsSelection) {
-      const selector = new ModuleSelector(dir);
-      const selected = await selector.select(spec, config);
-      config = { ...config, selectedTags: selected };
-    }
-
-    return new SDKGenerator(config, spec);
+    return new SDKGenerator(entries);
   }
 
   // ─── public API ──────────────────────────────────────────────────────────────
 
   async build(): Promise<void> {
     console.log("🦍 openapi-sdk generate — let's go!");
-    console.log('');
-    console.log(`📡 Spec: ${this.config.url}`);
-    console.log(`✅ Loaded: ${this.spec.info.title} v${this.spec.info.version}`);
-    console.log(`📦 Found ${this.tags.length} tag(s)`);
-    this.tags.forEach((t) => console.log(`   · "${t.name}" → ${t.slug}/`));
-    console.log('');
 
-    fs.mkdirSync(this.outputDir, { recursive: true });
-    await this.buildBaseService();
+    for (const entry of this.entries) {
+      console.log('');
+      console.log(`📡 Spec: ${entry.config.docUrl}`);
+      console.log(`✅ Loaded: ${entry.spec.info.title} v${entry.spec.info.version}`);
+      console.log(`📦 Found ${entry.tags.length} tag(s)`);
+      entry.tags.forEach((t) => console.log(`   · "${t.name}" → ${t.slug}/`));
+      console.log('');
 
-    const tagResults = new Map<string, { hasTypes: boolean }>();
-    for (const tag of this.tags) {
-      tagResults.set(tag.slug, await this.buildTag(tag));
+      fs.mkdirSync(entry.outputDir, { recursive: true });
+      await this.buildBaseService(entry);
+
+      const tagResults = new Map<string, { hasTypes: boolean }>();
+      for (const tag of entry.tags) {
+        tagResults.set(tag.slug, await this.buildTag(tag, entry));
+      }
+
+      await this.buildBarrelIndex(tagResults, entry);
     }
-
-    await this.buildBarrelIndex(tagResults);
 
     console.log('');
     console.log('🎉 SDK generated successfully!');
@@ -84,11 +96,11 @@ export class SDKGenerator {
 
   // ─── private builders ────────────────────────────────────────────────────────
 
-  private async buildTag(tag: ParsedTag): Promise<{ hasTypes: boolean }> {
-    const tagDir = path.join(this.outputDir, tag.slug);
+  private async buildTag(tag: ParsedTag, entry: SDKGenerator['entries'][number]): Promise<{ hasTypes: boolean }> {
+    const tagDir = path.join(entry.outputDir, tag.slug);
     fs.mkdirSync(tagDir, { recursive: true });
 
-    const typesContent = new TypeGenerator(tag, this.spec).build();
+    const typesContent = new TypeGenerator(tag, entry.spec).build();
     const hasTypes = typesContent.includes('export ');
 
     if (hasTypes) {
@@ -99,14 +111,14 @@ export class SDKGenerator {
     }
 
     const moduleFile = new Source({ path: path.join(tagDir, `${tag.slug}.module.ts`) });
-    moduleFile.changeData(new ModuleGenerator(tag, this.spec).build());
+    moduleFile.changeData(new ModuleGenerator(tag, entry.spec, entry.config.apiUrl).build());
     await moduleFile.save();
     console.log(`  📝 ${path.relative(process.cwd(), moduleFile.path)}`);
 
     return { hasTypes };
   }
 
-  private async buildBaseService(): Promise<void> {
+  private async buildBaseService(entry: SDKGenerator['entries'][number]): Promise<void> {
     const content = `// AUTO GENERATED — DO NOT EDIT
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import {
@@ -125,10 +137,21 @@ export function toQueryString<T extends object>(query: T): string {
 }
 
 export abstract class ApiDefaultService {
-  protected readonly baseUrl: string;
-  protected readonly config: {
+  private readonly baseUrl: string;
+  private readonly config: {
     headers: Headers;
   };
+
+  constructor(params: { baseUrl: string; apiKey?: string }) {
+    const { baseUrl, apiKey } = params;
+    this.baseUrl = baseUrl;
+
+    this.config = {
+      headers: {
+        ...(apiKey ? { 'api-key': apiKey } : {}),
+      },
+    };
+  }
 
   private getUrl(url: string) {
     const buildedUrl = \`\${this.baseUrl}/\${url}\`;
@@ -235,16 +258,16 @@ export abstract class ApiDefaultService {
 }
 `;
 
-    const file = new Source({ path: path.join(this.outputDir, 'api-default-service.ts') });
+    const file = new Source({ path: path.join(entry.outputDir, 'api-default-service.ts') });
     file.changeData(content);
     await file.save();
     console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
   }
 
-  private async buildBarrelIndex(tagResults: Map<string, { hasTypes: boolean }>): Promise<void> {
+  private async buildBarrelIndex(tagResults: Map<string, { hasTypes: boolean }>, entry: SDKGenerator['entries'][number]): Promise<void> {
     const lines = ['// AUTO GENERATED — DO NOT EDIT', ''];
 
-    for (const tag of this.tags) {
+    for (const tag of entry.tags) {
       const result = tagResults.get(tag.slug);
       if (result?.hasTypes) {
         lines.push(`export * from './${tag.slug}/${tag.slug}.types';`);
@@ -254,7 +277,7 @@ export abstract class ApiDefaultService {
 
     lines.push('');
 
-    const file = new Source({ path: path.join(this.outputDir, 'index.ts') });
+    const file = new Source({ path: path.join(entry.outputDir, 'index.ts') });
     file.changeData(lines.join('\n'));
     await file.save();
     console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);

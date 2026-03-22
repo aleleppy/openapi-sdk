@@ -6,10 +6,11 @@ export class SDKSetup {
   private readonly config:   SchemaConfig;
   private readonly filePath: string;
 
-  constructor(options: { url?: string; apiKey?: string; output?: string } = {}) {
+  constructor(options: { docUrl?: string; apiUrl?: string; apiKey?: string; output?: string } = {}) {
     this.filePath = path.join(process.cwd(), 'schema.json');
     this.config   = {
-      url:    options.url    || 'https://api.example.com/openapi.json',
+      docUrl: options.docUrl || 'https://api.example.com/openapi.json',
+      apiUrl: options.apiUrl || 'https://api.example.com',
       apiKey: options.apiKey || '',
       output: options.output || 'src/sdk',
     };
@@ -20,7 +21,7 @@ export class SDKSetup {
       console.log('⚠️  schema.json already exists. Overwriting...');
     }
 
-    fs.writeFileSync(this.filePath, JSON.stringify(this.config, null, 2) + '\n', 'utf-8');
+    fs.writeFileSync(this.filePath, JSON.stringify([this.config], null, 2) + '\n', 'utf-8');
 
     console.log('✅ schema.json created successfully!');
     console.log('');

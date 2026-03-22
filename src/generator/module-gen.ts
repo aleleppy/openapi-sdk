@@ -6,12 +6,14 @@ import {
 } from './helpers';
 
 export class ModuleGenerator {
-  private readonly tag:  ParsedTag;
-  private readonly spec: OpenAPISpec;
+  private readonly tag:    ParsedTag;
+  private readonly spec:   OpenAPISpec;
+  private readonly apiUrl: string;
 
-  constructor(tag: ParsedTag, spec: OpenAPISpec) {
-    this.tag  = tag;
-    this.spec = spec;
+  constructor(tag: ParsedTag, spec: OpenAPISpec, apiUrl: string) {
+    this.tag    = tag;
+    this.spec   = spec;
+    this.apiUrl = apiUrl;
   }
 
   // ─── public API ──────────────────────────────────────────────────────────────
@@ -36,6 +38,10 @@ export class ModuleGenerator {
 
     const className = this.slugToClassName();
     lines.push(`export class ${className} extends ApiDefaultService {`);
+    lines.push(`  constructor(params?: { apiKey: string }) {`);
+    lines.push(`    super({ baseUrl: '${this.apiUrl}', apiKey: params?.apiKey });`);
+    lines.push(`  }`);
+    lines.push('');
 
     for (let i = 0; i < this.tag.operations.length; i++) {
       const methodLines = this.generateMethodLines(this.tag.operations[i]);

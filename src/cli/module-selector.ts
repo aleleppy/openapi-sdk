@@ -1,14 +1,13 @@
 import { checkbox } from '@inquirer/prompts';
-import * as fs from 'fs';
-import * as path from 'path';
 import { OpenAPIParser } from '../generator/parser';
-import type { OpenAPISpec, SchemaConfig, ParsedTag } from '../types/openapi';
+import { OpenAPIFetcher } from '../generator/fetcher';
+import type { OpenAPISpec, SchemaConfig } from '../types/openapi';
 
 export class ModuleSelector {
-  private readonly configPath: string;
+  private readonly fetcher: OpenAPIFetcher;
 
-  constructor(dir: string = process.cwd()) {
-    this.configPath = path.join(dir, 'schema.json');
+  constructor(dir?: string) {
+    this.fetcher = new OpenAPIFetcher(dir);
   }
 
   async select(spec: OpenAPISpec, config: SchemaConfig): Promise<string[]> {
@@ -20,7 +19,7 @@ export class ModuleSelector {
     }
 
     const selected = await checkbox<string>({
-      message: 'Select modules to generate:',
+      message: `Select modules for ${config.apiUrl}:`,
       choices: tags.map((t) => ({
         name: `${t.name} (${t.operations.length} endpoints) → ${t.slug}/`,
         value: t.name,
@@ -34,8 +33,11 @@ export class ModuleSelector {
       console.warn('Warning: no modules selected. Nothing will be generated.');
     }
 
-    const updatedConfig: SchemaConfig = { ...config, selectedTags: selected };
-    fs.writeFileSync(this.configPath, JSON.stringify(updatedConfig, null, 2) + '\n', 'utf-8');
+    // update this config in the array and save
+    const configs = this.fetcher.configs.map((c) =>
+      c.docUrl === config.docUrl ? { ...c, selectedTags: selected } : c,
+    );
+    this.fetcher.saveConfigs(configs);
     console.log(`Saved ${selected.length} module(s) to schema.json`);
 
     return selected;

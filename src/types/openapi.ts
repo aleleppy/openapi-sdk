@@ -105,7 +105,8 @@ export function isReferenceObject(obj: unknown): obj is ReferenceObject {
 // ─── SDK config (schema.json) ─────────────────────────────────────────────────
 
 export interface SchemaConfig {
-  url: string;
+  docUrl: string;
+  apiUrl: string;
   apiKey?: string;
   output: string;
   selectedTags?: string[];

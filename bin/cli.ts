@@ -20,12 +20,14 @@ program
 program
   .command('setup')
   .description('Create a schema.json config file in the current directory')
-  .option('-u, --url <url>', 'OpenAPI spec URL')
+  .option('-d, --doc-url <url>', 'OpenAPI spec URL')
+  .option('-a, --api-url <url>', 'Base API URL')
   .option('-k, --api-key <key>', 'API key for authentication')
   .option('-o, --output <dir>', 'Output directory for generated SDK', 'src/sdk')
   .action((options) => {
     new SDKSetup({
-      url:    options.url,
+      docUrl: options.docUrl,
+      apiUrl: options.apiUrl,
       apiKey: options.apiKey,
       output: options.output,
     }).run();
@@ -55,9 +57,11 @@ program
   .action(async () => {
     try {
       const fetcher  = new OpenAPIFetcher();
-      const spec     = await fetcher.fetch();
       const selector = new ModuleSelector();
-      await selector.select(spec, fetcher.config);
+      for (const config of fetcher.configs) {
+        const spec = await fetcher.fetch(config);
+        await selector.select(spec, config);
+      }
     } catch (err: any) {
       console.error(`❌ Error: ${err.message}`);
       process.exit(1);
