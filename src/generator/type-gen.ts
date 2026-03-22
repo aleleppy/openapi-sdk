@@ -21,8 +21,19 @@ export class TypeGenerator {
     const generated = new Set<string>();
 
     for (const op of this.tag.operations) {
+      // collect enums from path params
+      for (const p of op.pathParams) {
+        const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
+        if (schema?.enum) {
+          const enumRef = toPascalCase(p.name) + "Enum";
+          if (!this.emittedEnums.has(enumRef)) {
+            this.emittedEnums.set(enumRef, schema.enum);
+          }
+        }
+      }
+
       if (op.requestBody) {
-        const name = operationTypeName(op.name, "Input");
+        const name = operationTypeName(op.name, "InputDto");
         if (!generated.has(name)) {
           const schema = resolveSchema(op.requestBody, this.spec);
           if (schema) {
@@ -61,7 +72,7 @@ export class TypeGenerator {
     const enumBlocks: string[] = [];
     for (const [enumName, values] of this.emittedEnums) {
       const members = values.map((v) => `  ${String(v)} = '${String(v)}',`).join("\n");
-      enumBlocks.push(`enum ${enumName} {\n${members}\n}`);
+      enumBlocks.push(`export enum ${enumName} {\n${members}\n}`);
     }
 
     const allContent = [...enumBlocks, ...blocks].join("\n");

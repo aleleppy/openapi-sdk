@@ -93,8 +93,6 @@ export class SDKGenerator {
       await this.buildEntryIndex(tagResults, entry);
     }
 
-    await this.buildRootIndex(sdkRoot);
-
     console.log('');
     console.log('🎉 SDK generated successfully!');
   }
@@ -288,18 +286,4 @@ export abstract class ApiDefaultService {
     console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
   }
 
-  private async buildRootIndex(sdkRoot: string): Promise<void> {
-    const lines = ['// AUTO GENERATED — DO NOT EDIT', ''];
-
-    for (const entry of this.entries) {
-      lines.push(`export * from './${entry.config.name}';`);
-    }
-
-    lines.push('');
-
-    const file = new Source({ path: path.join(sdkRoot, 'index.ts') });
-    file.changeData(lines.join('\n'));
-    await file.save();
-    console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
-  }
 }

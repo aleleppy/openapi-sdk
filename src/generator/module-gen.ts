@@ -3,6 +3,7 @@ import {
   resolveSchema,
   extractDataSchema,
   operationTypeName,
+  toPascalCase,
 } from './helpers';
 
 export class ModuleGenerator {
@@ -69,9 +70,13 @@ export class ModuleGenerator {
   private collectTypeImports(): string[] {
     const imports: string[] = [];
     for (const op of this.tag.operations) {
-      if (op.requestBody)        imports.push(operationTypeName(op.name, 'Input'));
+      if (op.requestBody)        imports.push(operationTypeName(op.name, 'InputDto'));
       if (op.queryParams.length) imports.push(operationTypeName(op.name, 'Query'));
       if (op.responseSchema)     imports.push(operationTypeName(op.name, 'Response'));
+      for (const p of op.pathParams) {
+        const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
+        if (schema?.enum) imports.push(toPascalCase(p.name) + 'Enum');
+      }
     }
     return [...new Set(imports)];
   }
@@ -120,8 +125,15 @@ export class ModuleGenerator {
 
     const args: { name: string; type: string; optional: boolean }[] = [];
 
-    if (hasPath)  args.push({ name: 'params', type: `{ ${op.pathParams.map((p) => `${p.name}: string`).join('; ')} }`, optional: false });
-    if (hasBody)  args.push({ name: 'body', type: operationTypeName(op.name, 'Input'), optional: false });
+    if (hasPath) {
+      const paramFields = op.pathParams.map((p) => {
+        const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
+        const type = schema?.enum ? toPascalCase(p.name) + 'Enum' : 'string';
+        return `${p.name}: ${type}`;
+      });
+      args.push({ name: 'params', type: `{ ${paramFields.join('; ')} }`, optional: false });
+    }
+    if (hasBody)  args.push({ name: 'body', type: operationTypeName(op.name, 'InputDto'), optional: false });
     if (hasQuery) args.push({ name: 'query', type: operationTypeName(op.name, 'Query'), optional: true });
 
     if (args.length === 1) {
