@@ -106,4 +106,5 @@ export interface SchemaConfig {
   url: string;
   apiKey?: string;
   output: string;
+  selectedTags?: string[];
 }

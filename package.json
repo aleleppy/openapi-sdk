@@ -23,6 +23,7 @@
   "author": "Pináculo Digital <mangu@pinaculodigital.com.br>",
   "license": "MIT",
   "dependencies": {
+    "@inquirer/prompts": "^8.3.2",
     "axios": "^1.7.0",
     "commander": "^12.1.0",
     "prettier": "^3.8.1"

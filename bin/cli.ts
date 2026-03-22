@@ -3,6 +3,8 @@
 import { Command } from 'commander';
 import { SDKSetup }     from '../src/cli/setup';
 import { SDKGenerator } from '../src/cli/generate';
+import { ModuleSelector } from '../src/cli/module-selector';
+import { OpenAPIFetcher } from '../src/generator/fetcher';
 import * as path from 'path';
 
 // resolve package.json from dist/bin/ → ../../package.json (root)
@@ -32,10 +34,30 @@ program
 program
   .command('generate')
   .description('Fetch OpenAPI spec and generate the TypeScript SDK')
+  .option('--all', 'Generate all modules, ignoring saved preferences')
+  .option('--select', 'Force interactive module selection before generating')
+  .action(async (options) => {
+    try {
+      const generator = await SDKGenerator.create(undefined, {
+        forceSelect: options.select,
+        generateAll: options.all,
+      });
+      await generator.build();
+    } catch (err: any) {
+      console.error(`❌ Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('select')
+  .description('Fetch spec and interactively select which modules to generate')
   .action(async () => {
     try {
-      const generator = await SDKGenerator.create();
-      await generator.build();
+      const fetcher  = new OpenAPIFetcher();
+      const spec     = await fetcher.fetch();
+      const selector = new ModuleSelector();
+      await selector.select(spec, fetcher.config);
     } catch (err: any) {
       console.error(`❌ Error: ${err.message}`);
       process.exit(1);

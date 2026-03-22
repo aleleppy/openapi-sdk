@@ -20,7 +20,12 @@ export class ModuleGenerator {
 
   build(): string {
     const lines: string[] = ['// AUTO GENERATED — DO NOT EDIT'];
-    lines.push("import { ApiDefaultService } from '../api-default-service';");
+    const hasAnyQuery = this.tag.operations.some((op) => op.queryParams.length > 0);
+    if (hasAnyQuery) {
+      lines.push("import { ApiDefaultService, toQueryString } from '../api-default-service';");
+    } else {
+      lines.push("import { ApiDefaultService } from '../api-default-service';");
+    }
 
     const typeImports = this.collectTypeImports();
     if (typeImports.length > 0) {
@@ -91,7 +96,7 @@ export class ModuleGenerator {
     lines.push(`async ${fnName}${argPart}: ${retType} {`);
 
     if (hasQuery) {
-      lines.push(`  const qs = query ? \`?\${new URLSearchParams(query as any).toString()}\` : '';`);
+      lines.push(`  const qs = query ? toQueryString(query) : '';`);
       urlExpr = `\`\${${urlExpr}}\${qs}\``;
     }
 
@@ -109,13 +114,19 @@ export class ModuleGenerator {
     const hasQuery = op.queryParams.length > 0;
     if (!hasPath && !hasBody && !hasQuery) return '';
 
-    const d: string[] = [];
-    const t: string[] = [];
+    const args: { name: string; type: string; optional: boolean }[] = [];
 
-    if (hasPath)  { d.push('params'); t.push(`params: { ${op.pathParams.map((p) => `${p.name}: string`).join('; ')} }`); }
-    if (hasBody)  { d.push('body');   t.push(`body: ${buildTypeName(op.method, op.path, 'Input')}`); }
-    if (hasQuery) { d.push('query');  t.push(`query?: ${buildTypeName(op.method, op.path, 'Query')}`); }
+    if (hasPath)  args.push({ name: 'params', type: `{ ${op.pathParams.map((p) => `${p.name}: string`).join('; ')} }`, optional: false });
+    if (hasBody)  args.push({ name: 'body', type: buildTypeName(op.method, op.path, 'Input'), optional: false });
+    if (hasQuery) args.push({ name: 'query', type: buildTypeName(op.method, op.path, 'Query'), optional: true });
 
+    if (args.length === 1) {
+      const a = args[0];
+      return `${a.name}${a.optional ? '?' : ''}: ${a.type}`;
+    }
+
+    const d = args.map((a) => a.name);
+    const t = args.map((a) => `${a.name}${a.optional ? '?' : ''}: ${a.type}`);
     return `{ ${d.join(', ')} }: { ${t.join('; ')} }`;
   }
 

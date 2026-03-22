@@ -14,7 +14,7 @@ export class Source {
 
   async save() {
     const options   = await prettier.resolveConfig(process.cwd());
-    const formatted = await prettier.format(this.data, { ...options, filepath: this.path });
+    const formatted = await prettier.format(this.data, { singleQuote: true, ...options, filepath: this.path });
 
     writeFileSync(this.path, formatted, 'utf8');
   }

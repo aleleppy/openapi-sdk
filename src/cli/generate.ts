@@ -4,8 +4,14 @@ import { OpenAPIFetcher } from '../generator/fetcher';
 import { OpenAPIParser } from '../generator/parser';
 import { TypeGenerator } from '../generator/type-gen';
 import { ModuleGenerator } from '../generator/module-gen';
+import { ModuleSelector } from './module-selector';
 import { Source } from '../generator/source';
 import type { OpenAPISpec, SchemaConfig, ParsedTag } from '../types/openapi';
+
+export interface GenerateOptions {
+  forceSelect?: boolean;
+  generateAll?: boolean;
+}
 
 export class SDKGenerator {
   readonly config:    SchemaConfig;
@@ -16,14 +22,39 @@ export class SDKGenerator {
   private constructor(config: SchemaConfig, spec: OpenAPISpec) {
     this.config    = config;
     this.spec      = spec;
-    this.tags      = new OpenAPIParser(spec).tags;
+    const allTags  = new OpenAPIParser(spec).tags;
+
+    if (config.selectedTags) {
+      this.tags = allTags.filter((t) => config.selectedTags!.includes(t.name));
+      const missing = config.selectedTags.filter((name) => !allTags.some((t) => t.name === name));
+      if (missing.length > 0) {
+        console.warn(`⚠️  Tags not found in spec: ${missing.join(', ')}`);
+      }
+    } else {
+      this.tags = allTags;
+    }
+
     this.outputDir = path.resolve(process.cwd(), config.output);
   }
 
-  static async create(dir?: string): Promise<SDKGenerator> {
+  static async create(dir?: string, options: GenerateOptions = {}): Promise<SDKGenerator> {
     const fetcher = new OpenAPIFetcher(dir);
     const spec    = await fetcher.fetch();
-    return new SDKGenerator(fetcher.config, spec);
+    let config    = fetcher.config;
+
+    if (options.generateAll) {
+      return new SDKGenerator({ ...config, selectedTags: undefined }, spec);
+    }
+
+    const needsSelection = options.forceSelect || config.selectedTags === undefined;
+
+    if (needsSelection) {
+      const selector = new ModuleSelector(dir);
+      const selected = await selector.select(spec, config);
+      config = { ...config, selectedTags: selected };
+    }
+
+    return new SDKGenerator(config, spec);
   }
 
   // ─── public API ──────────────────────────────────────────────────────────────
@@ -40,11 +71,12 @@ export class SDKGenerator {
     fs.mkdirSync(this.outputDir, { recursive: true });
     await this.buildBaseService();
 
+    const tagResults = new Map<string, { hasTypes: boolean }>();
     for (const tag of this.tags) {
-      await this.buildTag(tag);
+      tagResults.set(tag.slug, await this.buildTag(tag));
     }
 
-    await this.buildBarrelIndex();
+    await this.buildBarrelIndex(tagResults);
 
     console.log('');
     console.log('🎉 SDK generated successfully!');
@@ -52,19 +84,26 @@ export class SDKGenerator {
 
   // ─── private builders ────────────────────────────────────────────────────────
 
-  private async buildTag(tag: ParsedTag): Promise<void> {
+  private async buildTag(tag: ParsedTag): Promise<{ hasTypes: boolean }> {
     const tagDir = path.join(this.outputDir, tag.slug);
     fs.mkdirSync(tagDir, { recursive: true });
 
-    const typesFile = new Source({ path: path.join(tagDir, `${tag.slug}.types.ts`) });
-    typesFile.changeData(new TypeGenerator(tag, this.spec).build());
-    await typesFile.save();
-    console.log(`  📝 ${path.relative(process.cwd(), typesFile.path)}`);
+    const typesContent = new TypeGenerator(tag, this.spec).build();
+    const hasTypes = typesContent.includes('export ');
+
+    if (hasTypes) {
+      const typesFile = new Source({ path: path.join(tagDir, `${tag.slug}.types.ts`) });
+      typesFile.changeData(typesContent);
+      await typesFile.save();
+      console.log(`  📝 ${path.relative(process.cwd(), typesFile.path)}`);
+    }
 
     const moduleFile = new Source({ path: path.join(tagDir, `${tag.slug}.module.ts`) });
     moduleFile.changeData(new ModuleGenerator(tag, this.spec).build());
     await moduleFile.save();
     console.log(`  📝 ${path.relative(process.cwd(), moduleFile.path)}`);
+
+    return { hasTypes };
   }
 
   private async buildBaseService(): Promise<void> {
@@ -77,6 +116,13 @@ import {
 } from '@repo/_utils/errors/app-errors';
 
 type Headers = AxiosRequestConfig<unknown>['headers'];
+
+export function toQueryString<T extends object>(query: T): string {
+  const params = Object.entries(query)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => [k, String(v)]);
+  return params.length > 0 ? \`?\${new URLSearchParams(params).toString()}\` : '';
+}
 
 export abstract class ApiDefaultService {
   protected readonly baseUrl: string;
@@ -129,7 +175,7 @@ export abstract class ApiDefaultService {
     }
   }
 
-  protected async put<T>(params: { body: unknown; headers?: Headers; url: string }): Promise<T> {
+  protected async put<T>(params: { body?: unknown; headers?: Headers; url: string }): Promise<T> {
     const { body, url, headers } = params;
 
     const config = this.getConfig(headers);
@@ -146,7 +192,7 @@ export abstract class ApiDefaultService {
     return this.tryAndCatch<T>(axios.get(this.getUrl(url), config));
   }
 
-  protected async post<T>(params: { url: string; body: unknown; headers?: Headers }): Promise<T> {
+  protected async post<T>(params: { url: string; body?: unknown; headers?: Headers }): Promise<T> {
     const { url, body, headers } = params;
 
     const config = this.getConfig(headers);
@@ -155,7 +201,7 @@ export abstract class ApiDefaultService {
     return this.tryAndCatch<T>(axios.post(finalUrl, body, config));
   }
 
-  protected async patch<T>(params: { url: string; body: unknown; headers?: Headers }): Promise<T> {
+  protected async patch<T>(params: { url: string; body?: unknown; headers?: Headers }): Promise<T> {
     const { url, body, headers } = params;
 
     const config = this.getConfig(headers);
@@ -195,11 +241,14 @@ export abstract class ApiDefaultService {
     console.log(`  📝 ${path.relative(process.cwd(), file.path)}`);
   }
 
-  private async buildBarrelIndex(): Promise<void> {
+  private async buildBarrelIndex(tagResults: Map<string, { hasTypes: boolean }>): Promise<void> {
     const lines = ['// AUTO GENERATED — DO NOT EDIT', ''];
 
     for (const tag of this.tags) {
-      lines.push(`export * from './${tag.slug}/${tag.slug}.types';`);
+      const result = tagResults.get(tag.slug);
+      if (result?.hasTypes) {
+        lines.push(`export * from './${tag.slug}/${tag.slug}.types';`);
+      }
       lines.push(`export * from './${tag.slug}/${tag.slug}.module';`);
     }
 
