@@ -1,5 +1,5 @@
 import type { OpenAPISpec, ParsedTag, SchemaObject, ReferenceObject, ParameterObject } from "../types/openapi";
-import { resolveSchema, extractDataSchema, buildTypeName, toPascalCase } from "./helpers";
+import { resolveSchema, extractDataSchema, toPascalCase, operationTypeName } from "./helpers";
 
 type Mode = "input" | "response";
 
@@ -22,7 +22,7 @@ export class TypeGenerator {
 
     for (const op of this.tag.operations) {
       if (op.requestBody) {
-        const name = buildTypeName(op.method, op.path, "Input");
+        const name = operationTypeName(op.name, "Input");
         if (!generated.has(name)) {
           const schema = resolveSchema(op.requestBody, this.spec);
           if (schema) {
@@ -33,7 +33,7 @@ export class TypeGenerator {
       }
 
       if (op.queryParams.length > 0) {
-        const name = buildTypeName(op.method, op.path, "Query");
+        const name = operationTypeName(op.name, "Query");
         if (!generated.has(name)) {
           blocks.push(this.generateQueryClass(name, op.queryParams));
           generated.add(name);
@@ -41,7 +41,7 @@ export class TypeGenerator {
       }
 
       if (op.responseSchema) {
-        const name = buildTypeName(op.method, op.path, "Response");
+        const name = operationTypeName(op.name, "Response");
         if (!generated.has(name)) {
           const raw = resolveSchema(op.responseSchema, this.spec);
           if (raw) {

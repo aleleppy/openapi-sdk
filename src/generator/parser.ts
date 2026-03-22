@@ -7,7 +7,7 @@ import type {
   SchemaObject,
   ReferenceObject,
 } from '../types/openapi';
-import { capitalize } from './helpers';
+import { capitalize, extractOperationName, buildNameFromPath } from './helpers';
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head'] as const;
 
@@ -30,6 +30,7 @@ export class OpenAPIParser {
 
         const tag         = operation.tags?.[0] || 'default';
         const operationId = operation.operationId || this.generateOperationId(method, pathStr);
+        const name        = extractOperationName(operationId, buildNameFromPath(method, pathStr));
 
         const allParams: ParameterObject[] = [
           ...(pathItem.parameters || []),
@@ -44,7 +45,7 @@ export class OpenAPIParser {
 
         if (!tagMap.has(tag)) tagMap.set(tag, []);
         tagMap.get(tag)!.push({
-          method, path: pathStr, operationId, tag,
+          method, path: pathStr, operationId, name, tag,
           summary: operation.summary,
           pathParams, queryParams, requestBody, responseSchema,
         });

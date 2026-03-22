@@ -81,6 +81,8 @@ export interface ParsedOperation {
   method: string;
   path: string;
   operationId: string;
+  /** Controller method name extracted from operationId (e.g. "create", "findAll") */
+  name: string;
   tag: string;
   summary?: string;
   pathParams: ParameterObject[];

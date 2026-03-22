@@ -26,7 +26,31 @@ export function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// ─── name builders ────────────────────────────────────────────────────────────
+// ─── operation name (from NestJS operationId) ────────────────────────────────
+
+/**
+ * Extracts the controller method name from a NestJS operationId.
+ *
+ * NestJS Swagger format: "UsersController_create" → "create"
+ *                        "UsersController_findAll" → "findAll" (list → listAll)
+ *
+ * Falls back to `fallback` when operationId doesn't follow the pattern.
+ */
+export function extractOperationName(operationId: string, fallback: string): string {
+  const idx  = operationId.indexOf('_');
+  if (idx === -1) return fallback;
+  const name = operationId.slice(idx + 1);
+  if (!name) return fallback;
+  if (name === 'list') return 'listAll';
+  return name;
+}
+
+/** Derives type/class name prefix from operation name: "create" → "Create" */
+export function operationTypeName(opName: string, suffix: string): string {
+  return toPascalCase(opName) + suffix;
+}
+
+// ─── name builders (path-based fallback) ────────────────────────────────────
 
 export function buildNameFromPath(method: string, pathStr: string): string {
   const segments = pathStr.split('/').filter(Boolean);

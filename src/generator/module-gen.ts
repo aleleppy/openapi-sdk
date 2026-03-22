@@ -2,9 +2,7 @@ import type { ParsedTag, ParsedOperation, OpenAPISpec } from '../types/openapi';
 import {
   resolveSchema,
   extractDataSchema,
-  buildNameFromPath,
-  buildTypeName,
-  toCamelCase,
+  operationTypeName,
 } from './helpers';
 
 export class ModuleGenerator {
@@ -65,15 +63,15 @@ export class ModuleGenerator {
   private collectTypeImports(): string[] {
     const imports: string[] = [];
     for (const op of this.tag.operations) {
-      if (op.requestBody)        imports.push(buildTypeName(op.method, op.path, 'Input'));
-      if (op.queryParams.length) imports.push(buildTypeName(op.method, op.path, 'Query'));
-      if (op.responseSchema)     imports.push(buildTypeName(op.method, op.path, 'Response'));
+      if (op.requestBody)        imports.push(operationTypeName(op.name, 'Input'));
+      if (op.queryParams.length) imports.push(operationTypeName(op.name, 'Query'));
+      if (op.responseSchema)     imports.push(operationTypeName(op.name, 'Response'));
     }
     return [...new Set(imports)];
   }
 
   private generateMethodLines(op: ParsedOperation): string[] {
-    const fnName  = toCamelCase(buildNameFromPath(op.method, op.path));
+    const fnName  = op.name;
     const argStr  = this.buildArgument(op);
     const retType = this.buildReturnType(op);
 
@@ -117,8 +115,8 @@ export class ModuleGenerator {
     const args: { name: string; type: string; optional: boolean }[] = [];
 
     if (hasPath)  args.push({ name: 'params', type: `{ ${op.pathParams.map((p) => `${p.name}: string`).join('; ')} }`, optional: false });
-    if (hasBody)  args.push({ name: 'body', type: buildTypeName(op.method, op.path, 'Input'), optional: false });
-    if (hasQuery) args.push({ name: 'query', type: buildTypeName(op.method, op.path, 'Query'), optional: true });
+    if (hasBody)  args.push({ name: 'body', type: operationTypeName(op.name, 'Input'), optional: false });
+    if (hasQuery) args.push({ name: 'query', type: operationTypeName(op.name, 'Query'), optional: true });
 
     if (args.length === 1) {
       const a = args[0];
@@ -132,7 +130,7 @@ export class ModuleGenerator {
 
   private buildReturnType(op: ParsedOperation): string {
     if (!op.responseSchema) return 'Promise<void>';
-    const typeName = buildTypeName(op.method, op.path, 'Response');
+    const typeName = operationTypeName(op.name, 'Response');
     const raw      = resolveSchema(op.responseSchema, this.spec);
     if (!raw) return `Promise<${typeName}>`;
     const inner  = extractDataSchema(raw, this.spec);
