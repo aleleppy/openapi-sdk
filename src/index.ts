@@ -8,4 +8,8 @@ export { ModuleGenerator } from './generator/module-gen';
 export { Source }          from './generator/source';
 export { SDKGenerator }    from './cli/generate';
 export { SDKSetup }        from './cli/setup';
+export { BaseServiceBuilder } from './cli/generate/BaseServiceBuilder';
+export { TagBuilder }         from './cli/generate/TagBuilder';
+export { IndexBuilder }       from './cli/generate/IndexBuilder';
+export { ReadmeBuilder }      from './cli/generate/ReadmeBuilder';
 export type * from './types/openapi';
