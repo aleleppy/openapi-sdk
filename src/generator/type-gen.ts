@@ -4,6 +4,7 @@ import type {
   SchemaObject,
   ReferenceObject,
   ParameterObject,
+  ParsedOperation,
 } from '../types/openapi';
 import {
   resolveSchema,
@@ -27,26 +28,32 @@ export class TypeGenerator {
 
   // ─── public API ──────────────────────────────────────────────────────────────
 
+  private seiLa(op: ParsedOperation) {
+    for (const p of op.pathParams) {
+      const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
+
+      if (!schema?.enum) continue;
+
+      const enumRef = toPascalCase(p.name) + 'Enum';
+      if (this.emittedEnums.has(enumRef)) continue;
+
+      this.emittedEnums.set(enumRef, schema.enum);
+    }
+  }
+
   build(): string {
     const blocks: string[] = [];
     const generated = new Set<string>();
 
     for (const op of this.tag.operations) {
-      // collect enums from path params
-      for (const p of op.pathParams) {
-        const schema = p.schema ? resolveSchema(p.schema, this.spec) : null;
-        if (schema?.enum) {
-          const enumRef = toPascalCase(p.name) + 'Enum';
-          if (!this.emittedEnums.has(enumRef)) {
-            this.emittedEnums.set(enumRef, schema.enum);
-          }
-        }
-      }
+      this.seiLa(op);
 
       if (op.requestBody) {
         const name = operationTypeName(op.name, 'InputDto');
+
         if (!generated.has(name)) {
           const schema = resolveSchema(op.requestBody, this.spec);
+
           if (schema) {
             blocks.push(this.generateClassBlock(name, schema, 'input'));
             generated.add(name);
@@ -56,6 +63,7 @@ export class TypeGenerator {
 
       if (op.queryParams.length > 0) {
         const name = operationTypeName(op.name, 'Query');
+
         if (!generated.has(name)) {
           blocks.push(this.generateQueryClass(name, op.queryParams));
           generated.add(name);
@@ -64,8 +72,10 @@ export class TypeGenerator {
 
       if (op.responseSchema) {
         const name = operationTypeName(op.name, 'Response');
+
         if (!generated.has(name)) {
           const raw = resolveSchema(op.responseSchema, this.spec);
+
           if (raw) {
             const inner = extractDataSchema(raw, this.spec);
             const schema = inner ?? raw;
@@ -153,7 +163,7 @@ export class TypeGenerator {
     const fieldClassNames: string[] = [];
 
     for (const fieldName of fieldNames) {
-      const fieldSchemaOrRef = schema.properties![fieldName];
+      const fieldSchemaOrRef = schema.properties[fieldName];
       const fieldSchema = resolveSchema(fieldSchemaOrRef, this.spec);
       if (!fieldSchema) continue;
 
@@ -179,14 +189,14 @@ export class TypeGenerator {
 
     if (fieldClassNames.length === 1) {
       lines.push(`export class ${name} extends ${fieldClassNames[0]} {}`);
+    } else {
+      lines.push(
+        `export class ${name} extends IntersectionType(`,
+        ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
+        `  ${fieldClassNames[fieldClassNames.length - 1]},`,
+        `) {}`,
+      );
     }
-
-    lines.push(
-      `export class ${name} extends IntersectionType(`,
-      ...fieldClassNames.slice(0, -1).map((c) => `  ${c},`),
-      `  ${fieldClassNames[fieldClassNames.length - 1]},`,
-      `) {}`,
-    );
 
     return lines.join('\n');
   }
@@ -210,7 +220,7 @@ export class TypeGenerator {
       const nestedPrefix = prefix + toPascalCase(fieldName);
 
       for (const nestedField of fieldNames) {
-        const nestedSchemaOrRef = schema.properties![nestedField];
+        const nestedSchemaOrRef = schema.properties[nestedField];
         const nestedSchema = resolveSchema(nestedSchemaOrRef, this.spec);
         if (!nestedSchema) continue;
 
@@ -327,6 +337,28 @@ export class TypeGenerator {
         lines.push('}');
         return lines;
       }
+    }
+
+    // ─── array of primitives → proper items type ──────────────────────────
+    if (schema.type === 'array' && schema.items) {
+      const itemSchema = resolveSchema(schema.items, this.spec);
+      const itemTsType = itemSchema
+        ? this.mapType(itemSchema, fieldName)
+        : 'unknown';
+      const itemApiType = itemSchema
+        ? this.mapApiPropertyType(itemSchema)
+        : "'string'";
+
+      const lines: string[] = [`class ${className} {`];
+      lines.push(
+        `  @ApiProperty({ type: ${itemApiType}, isArray: true, example: [] })`,
+      );
+      if (mode === 'input' && optional) lines.push('  @IsOptional()');
+      const bang = optional ? '' : '!';
+      const question = optional ? '?' : '';
+      lines.push(`  ${fieldName}${question}${bang}: ${itemTsType}[];`);
+      lines.push('}');
+      return lines;
     }
 
     // ─── primitive / enum / array field ────────────────────────────────────

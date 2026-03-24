@@ -15,6 +15,7 @@ export class Source {
     let output = this.data;
     try {
       const options = await prettier.resolveConfig(process.cwd());
+
       output = await prettier.format(this.data, {
         singleQuote: true,
         ...options,

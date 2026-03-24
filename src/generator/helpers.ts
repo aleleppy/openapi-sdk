@@ -90,7 +90,8 @@ export function resolveSchema(
       return { type: 'object', description: '(circular ref)' };
     }
     const next = new Set(visited).add(schemaOrRef.$ref);
-    return resolveRef(schemaOrRef.$ref, spec, next);
+    const resolved = resolveRef(schemaOrRef.$ref, spec, next);
+    return resolved ? resolveSchema(resolved, spec, next) : null;
   }
 
   if (schemaOrRef.allOf) {
