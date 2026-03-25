@@ -1,6 +1,6 @@
 {
   "name": "@pinaculodigital/openapi-sdk",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CLI + code generator that reads an OpenAPI 3.x spec and outputs typed TypeScript SDK modules with axios",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
