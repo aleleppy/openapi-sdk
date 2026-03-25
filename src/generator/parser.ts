@@ -33,7 +33,7 @@ export class OpenAPIParser {
 
     for (const [pathStr, pathItem] of Object.entries(spec.paths)) {
       for (const method of HTTP_METHODS) {
-        const operation = pathItem[method] as OperationObject | undefined;
+        const operation = pathItem[method];
         if (!operation) continue;
 
         const tag = operation.tags?.[0] || 'default';
@@ -111,7 +111,7 @@ export class OpenAPIParser {
     if (rb.content) {
       const jsonContent =
         rb.content['application/json'] || Object.values(rb.content)[0];
-      if ((jsonContent as any)?.schema) return (jsonContent as any).schema;
+      if (jsonContent?.schema) return jsonContent.schema;
     }
 
     return null;
@@ -135,7 +135,7 @@ export class OpenAPIParser {
     if (resp.content) {
       const jsonContent =
         resp.content['application/json'] || Object.values(resp.content)[0];
-      if ((jsonContent as any)?.schema) return (jsonContent as any).schema;
+      if (jsonContent?.schema) return jsonContent.schema;
     }
 
     return null;

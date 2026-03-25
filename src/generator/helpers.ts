@@ -4,6 +4,7 @@ import type {
   ReferenceObject,
 } from '../types/openapi';
 import { isReferenceObject } from '../types/openapi';
+import { schemaRefs } from './schema-refs';
 
 // ─── string utils ─────────────────────────────────────────────────────────────
 
@@ -81,36 +82,52 @@ export function buildTypeName(
 // ─── schema resolution ────────────────────────────────────────────────────────
 
 export function resolveSchema(
-  schemaOrRef: SchemaObject | ReferenceObject,
+  schema: SchemaObject | ReferenceObject,
   spec: OpenAPISpec,
   visited: Set<string> = new Set(),
 ): SchemaObject | null {
-  if (isReferenceObject(schemaOrRef)) {
-    if (visited.has(schemaOrRef.$ref)) {
-      return { type: 'object', description: '(circular ref)' };
+  if (isReferenceObject(schema)) {
+    const splitted = schema.$ref.split('/').at(-1);
+
+    if (!splitted) {
+      console.log('algo deu errado ao splitar o ref');
+      return null;
     }
-    const next = new Set(visited).add(schemaOrRef.$ref);
-    const resolved = resolveRef(schemaOrRef.$ref, spec, next);
-    return resolved ? resolveSchema(resolved, spec, next) : null;
+
+    const findedSchema = schemaRefs.get(splitted);
+
+    return findedSchema ?? null;
   }
 
-  if (schemaOrRef.allOf) {
+  if (isReferenceObject(schema)) {
+    if (visited.has(schema.$ref)) {
+      return { type: 'object', description: '(circular ref)' };
+    }
+
+    const next = new Set(visited).add(schema.$ref);
+    const resolved = resolveRef(schema.$ref, spec, next);
+
+    return resolved ? resolveSchema(resolved, spec, next) : null;
+  } else if (schema.allOf) {
     const merged: SchemaObject = {
       type: 'object',
       properties: {},
       required: [],
     };
-    for (const item of schemaOrRef.allOf) {
+
+    for (const item of schema.allOf) {
       const r = resolveSchema(item, spec, visited);
       if (r?.properties)
         merged.properties = { ...merged.properties, ...r.properties };
       if (r?.required)
         merged.required = [...(merged.required || []), ...r.required];
     }
+
     return merged;
+  } else if (schema.properties) {
   }
 
-  return schemaOrRef;
+  return schema;
 }
 
 function resolveRef(
@@ -139,8 +156,10 @@ export function extractDataSchema(
   spec: OpenAPISpec,
 ): SchemaObject | null {
   const props = schema.properties || {};
+
   if ((props.statusCode || props.status) && props.data) {
-    return resolveSchema(props.data as SchemaObject | ReferenceObject, spec);
+    return resolveSchema(props.data, spec);
   }
+
   return null;
 }

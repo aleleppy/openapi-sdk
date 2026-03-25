@@ -99,7 +99,7 @@ export interface ParsedTag {
 }
 
 export function isReferenceObject(obj: unknown): obj is ReferenceObject {
-  return typeof obj === 'object' && obj !== null && '\$ref' in obj;
+  return typeof obj === 'object' && obj !== null && '$ref' in obj;
 }
 
 // ─── SDK config (schema.json) ─────────────────────────────────────────────────
