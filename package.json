@@ -15,7 +15,8 @@
     "build": "tsc",
     "dev": "ts-node src/bin/cli.ts",
     "setup": "ts-node src/bin/cli.ts setup",
-    "generate": "ts-node src/bin/cli.ts generate"
+    "generate": "ts-node src/bin/cli.ts generate",
+    "release": "npm run build && npm version patch && npm publish --access public"
   },
   "keywords": [
     "openapi",
