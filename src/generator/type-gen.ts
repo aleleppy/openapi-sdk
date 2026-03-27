@@ -164,7 +164,7 @@ export class TypeGenerator {
         })
         .join(',\n');
       enumBlocks.push(
-        `export const ${enumName} = {\n${entries},\n} as const;\nexport type ${enumName} = (typeof ${enumName})[keyof typeof ${enumName}];`,
+        `export const ${enumName} = {\n${entries},\n} as const;\n// eslint-disable-next-line no-redeclare\nexport type ${enumName} = (typeof ${enumName})[keyof typeof ${enumName}];`,
       );
     }
 
