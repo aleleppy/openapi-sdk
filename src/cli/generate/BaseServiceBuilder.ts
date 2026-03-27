@@ -75,7 +75,7 @@ export class BaseServiceBuilder {
       }
 
       private responseParser<T>(data: unknown): T | undefined {
-        if (data && typeof data === 'object' && 'data' in data) {
+        if (data && typeof data === 'object' && 'data' in data && !Array.isArray(data.data)) {
           return this.responseParser(data.data);
         }
         return data as T;
